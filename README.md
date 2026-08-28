@@ -18,7 +18,7 @@ Inspired by the [Q3 2026 "Experimental JSON-RPC Data Service"](https://thegraph.
 | `RPCDataService` contract | ✅ Live on Arbitrum One |
 | Subgraph | ✅ Live on The Graph Studio |
 | npm packages | ✅ Published (`@lodestar-dispatch/consumer-sdk`, `@lodestar-dispatch/indexer-agent`) |
-| Active providers | ✅ **1** — `https://rpc.cargopete.com` / `https://gateway.lodestar-dashboard.com` (Arbitrum One + Base, Archive + Debug) |
+| Active providers | ⚠️ **2 registered on-chain, 0 answering** (checked 2026-08-28) — `rpc.cargopete.com` fails its TLS handshake; the second provider's Railway endpoints return "Application not found". The contract and registrations are live; nothing is serving. See [docs/outage-2026-08-28.md](docs/outage-2026-08-28.md). |
 | Consumer-pays escrow | ✅ Enforced — `X-Consumer-Address` required; no free queries |
 | Receipt signing & validation | ✅ Working — every request carries a signed EIP-712 TAP receipt |
 | Receipt persistence | ✅ Working — stored in `tap_receipts` table in postgres |
