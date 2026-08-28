@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::{
-    config::CapabilityTier, error::GatewayError, metrics, registry::Provider, selector,
+    affinity, config::CapabilityTier, error::GatewayError, metrics, registry::Provider, selector,
     server::AppState,
 };
 use dispatch_tap::create_receipt;
@@ -291,17 +291,33 @@ async fn process_request(
             return Err(GatewayError::NoProviders(chain_id));
         }
 
-        selector::select(
+        // A filter lives inside ONE node. Route the follow-up anywhere else and a perfectly
+        // healthy provider answers "filter not found", which reads as that provider being broken.
+        // Pin to the owner, and deliberately do NOT fail over: a second opinion on a filter id is
+        // meaningless, and failing over turns a clear error into an intermittent one.
+        let pinned = affinity::pin_provider(
+            &state.filter_affinity,
+            chain_id,
+            &request.method,
+            &request.params,
             &capable,
-            chain_head,
-            if requires_quorum(&request.method) {
-                state.config.qos.quorum_k
-            } else {
-                state.config.qos.concurrent_k
-            },
-            state.config.gateway.region.as_deref(),
-            state.config.qos.region_bonus,
-        )
+            |p| p.address,
+        );
+        if let Some(provider) = pinned {
+            vec![provider]
+        } else {
+            selector::select(
+                &capable,
+                chain_head,
+                if requires_quorum(&request.method) {
+                    state.config.qos.quorum_k
+                } else {
+                    state.config.qos.concurrent_k
+                },
+                state.config.gateway.region.as_deref(),
+                state.config.qos.region_bonus,
+            )
+        }
     };
 
     let cu = cu_weight_for(&request.method);
@@ -340,6 +356,27 @@ async fn process_request(
         )
         .await?
     };
+
+    // Remember which node owns a newly created filter, and forget it once uninstalled. Only on a
+    // successful response: an errored create has no id to pin, and forgetting on a failed
+    // uninstall would strand a filter the node still holds.
+    if response.error.is_none() {
+        if affinity::creates_filter(&request.method) {
+            if let Some(id) = response
+                .result
+                .as_ref()
+                .and_then(affinity::filter_id_from_result)
+            {
+                state
+                    .filter_affinity
+                    .remember(chain_id, &id, winner.address);
+            }
+        } else if affinity::releases_filter(&request.method) {
+            if let Some(id) = affinity::filter_id_from_params(&request.params) {
+                state.filter_affinity.forget(chain_id, &id);
+            }
+        }
+    }
 
     let duration = start.elapsed().as_secs_f64();
     let outcome = if response.error.is_some() {

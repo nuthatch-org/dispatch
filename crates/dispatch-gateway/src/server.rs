@@ -7,6 +7,7 @@ use governor::{DefaultKeyedRateLimiter, Quota, RateLimiter};
 use k256::ecdsa::SigningKey;
 use tower_http::trace::TraceLayer;
 
+use crate::affinity::FilterAffinity;
 use crate::{config::Config, discovery, probe, provisioner, registry::Registry, routes};
 
 pub type IpRateLimiter = DefaultKeyedRateLimiter<std::net::IpAddr>;
@@ -25,6 +26,9 @@ pub struct AppState {
     pub signer_address: Address,
     /// Optional per-IP rate limiter (None when rate_limit is not configured).
     pub rate_limiter: Option<Arc<IpRateLimiter>>,
+    /// Which provider owns which filter. Filters are node-local state, so the follow-up call must
+    /// reach the same node that created them; see `affinity`.
+    pub filter_affinity: Arc<FilterAffinity>,
 }
 
 pub async fn run(config: Config) -> Result<()> {
@@ -62,6 +66,13 @@ pub async fn run(config: Config) -> Result<()> {
         tap_domain_separator,
         signer_address,
         rate_limiter,
+        // 5 minutes matches the idle window after which nodes drop filters themselves, so an
+        // entry never outlives the thing it points at. The cap is a memory bound, not a
+        // capacity plan: filter ids are attacker-controllable in volume.
+        filter_affinity: Arc::new(FilterAffinity::new(
+            std::time::Duration::from_secs(300),
+            100_000,
+        )),
     };
 
     // Initialise prometheus metrics (lazy statics — triggers registration).
