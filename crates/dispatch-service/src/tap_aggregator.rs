@@ -25,7 +25,9 @@ use alloy_sol_types::{sol, SolCall};
 use crate::{
     config::Config,
     db::{
-        receipts::{delete_covered, distinct_payers, fetch_by_payer, fetch_rav_floor, upsert_rav, RavRow},
+        receipts::{
+            delete_covered, distinct_payers, fetch_by_payer, fetch_rav_floor, upsert_rav, RavRow,
+        },
         Pool,
     },
 };
@@ -116,8 +118,12 @@ pub fn spawn(config: Arc<Config>, pool: Pool) {
     // Resolve Arbitrum RPC URL for the on-chain tokensCollected floor check.
     // Prefer tap.escrow_check_rpc_url (lighter, read-only endpoint); fall back
     // to collector.arbitrum_rpc_url if set.
-    let rpc_url: Option<String> = config.tap.escrow_check_rpc_url.clone()
-        .or_else(|| config.collector.as_ref().map(|c| c.arbitrum_rpc_url.clone()));
+    let rpc_url: Option<String> = config.tap.escrow_check_rpc_url.clone().or_else(|| {
+        config
+            .collector
+            .as_ref()
+            .map(|c| c.arbitrum_rpc_url.clone())
+    });
 
     if rpc_url.is_none() {
         tracing::warn!(

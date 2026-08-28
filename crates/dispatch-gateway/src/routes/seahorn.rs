@@ -21,10 +21,7 @@ pub fn router() -> Router<AppState> {
     Router::new().route("/solana/*path", any(seahorn_handler))
 }
 
-async fn seahorn_handler(
-    State(state): State<AppState>,
-    req: Request<Body>,
-) -> Response {
+async fn seahorn_handler(State(state): State<AppState>, req: Request<Body>) -> Response {
     let Some(seahorn) = state.config.seahorn.as_ref() else {
         return (StatusCode::NOT_FOUND, "Seahorn not configured").into_response();
     };
@@ -119,10 +116,5 @@ async fn seahorn_handler(
 
     tracing::info!(%target, status = status.as_u16(), bytes = resp_body.len(), "seahorn proxied");
 
-    (
-        status,
-        [("content-type", content_type.as_str())],
-        resp_body,
-    )
-        .into_response()
+    (status, [("content-type", content_type.as_str())], resp_body).into_response()
 }
