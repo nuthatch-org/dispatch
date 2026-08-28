@@ -183,9 +183,7 @@ contract H1CollectOrderingTest is Test {
         // The audit's success criterion was "GRT received at paymentsDestination > 0". It is not.
         // The sub-call's transfer is unwound with the parent frame, as EVM atomicity requires.
         assertEq(
-            token.balanceOf(destination),
-            0,
-            "H-1 CONFIRMED EXPLOITABLE: fees persisted through a reverting _lockStake"
+            token.balanceOf(destination), 0, "H-1 CONFIRMED EXPLOITABLE: fees persisted through a reverting _lockStake"
         );
     }
 
