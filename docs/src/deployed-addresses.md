@@ -40,6 +40,21 @@ Subgraph: `https://api.studio.thegraph.com/query/1747796/rpc-network/v0.3.0`
 
 ## Active providers
 
-| Address | Endpoint | Chains | Tiers |
+> Read from Arbitrum One 2026-08-28 by scanning `ProviderRegistered` / `ProviderDeregistered` and
+> `ServiceStarted` on the proxy, then confirming with `isRegistered()` and
+> `activeRegistrationCount()`. Not from memory.
+
+**Two independent providers, both registered and both serving.**
+
+| Address | Endpoint | Active registrations | Chains / tiers |
 |---|---|---|---|
-| `0xb43B...` | `https://rpc.cargopete.com` | 42161 | Standard, Archive |
+| `0xb43b2cccceada5292732a8c58ae134adefce09bb` | `https://rpc.cargopete.com` | 5 | 42161 Standard + Archive; 1, 56, 8453 Debug |
+| `0x575267eed09c338fae5716a486a7b58a5749a292` | — | 2 | 42161 Standard; 8453 Debug |
+
+`0x575267ee…` deregistered at block 456,950,409 and re-registered ten blocks later; it is
+registered now.
+
+**A note on quorum.** Deterministic methods are dispatched to three providers and the majority
+result wins. Arbitrum One Standard — the busiest lane — currently has **two** providers, so a
+three-way quorum cannot form there and the fallback path is what actually runs. Worth keeping in
+view when reading any claim about quorum-verified responses.
