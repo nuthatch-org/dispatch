@@ -3,6 +3,11 @@
 > Re-scoped 2026-08-28 against `contracts/src/RPCDataService.sol` at `1f03d7b` (365 lines).
 > Every claim below was checked by reading the current source or by running a test, not inferred.
 
+> **Forward-looking companion:** [](audit-scope.md) is the brief somebody else can
+> fund — what to audit now, what is already established and should not be re-derived, and what is
+> explicitly out of scope. This document handles the *previous* audit's findings; that one handles
+> the next audit's shape.
+
 ## Why this document exists
 
 The security assessment at `.context/outputs/1/audit-report.md` is dated **2026-04-15** and was run
