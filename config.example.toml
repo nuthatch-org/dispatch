@@ -9,7 +9,7 @@ operator_private_key = "0xYOUR_OPERATOR_PRIVATE_KEY"
 
 [tap]
 # RPCDataService contract address (Arbitrum One)
-data_service_address = "0xA983b18B8291F0c317Ba4Fe0dc0f7cc9373AF078"
+data_service_address = "0x7101d5c1a5c89c3647f5118da118e56c023ba0b9"
 
 # Ethereum addresses authorised to issue TAP receipts to this service.
 # Derived from the gateway's signer_private_key.

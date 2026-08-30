@@ -220,7 +220,7 @@ All Horizon contracts live on **Arbitrum One** (chain ID 42161).
 | Contract | Address |
 |---|---|
 | HorizonStaking | `0x00669A4CF01450B64E8A2A20E9b1FCB71E61eF03` |
-| GraphPayments | `0xb98a3D452E43e40C70F3c0B03C5c7B56A8B3b8CA` |
+| GraphPayments | `0x7Aae8ae011927BC36Cb4d0d3e81f2E6E30daE06D` |
 | PaymentsEscrow | `0xf6Fcc27aAf1fcD8B254498c9794451d82afC673E` |
 | GraphTallyCollector | `0x8f69F5C07477Ac46FBc491B1E6D91E2bb0111A9e` |
 | RPCDataService | `0x7101d5c1a5c89c3647f5118da118e56c023ba0b9` |

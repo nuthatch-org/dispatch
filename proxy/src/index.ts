@@ -12,7 +12,7 @@ const SUBGRAPH   = process.env.DISPATCH_SUBGRAPH_URL
   ?? "https://api.studio.thegraph.com/query/1747796/rpc-network/v0.2.0";
 const PRICE_PER_CU    = BigInt(process.env.DISPATCH_BASE_PRICE_PER_CU ?? "4000000000000");
 const DATA_SERVICE    = (process.env.DISPATCH_DATA_SERVICE_ADDRESS
-  ?? "0xA983b18B8291F0c317Ba4Fe0dc0f7cc9373AF078") as `0x${string}`;
+  ?? "0x7101d5c1a5c89c3647f5118da118e56c023ba0b9") as `0x${string}`;
 const TALLY_COLLECTOR = (process.env.DISPATCH_TALLY_COLLECTOR
   ?? "0x8f69F5C07477Ac46FBc491B1E6D91E2bb0111A9e") as `0x${string}`;
 const KEY_FILE = process.env.DISPATCH_KEY_FILE ?? "./consumer.key";

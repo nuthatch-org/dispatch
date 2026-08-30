@@ -16,7 +16,7 @@ port = 8080
 signer_private_key = "0x0000000000000000000000000000000000000000000000000000000000000000"
 
 # RPCDataService contract address.
-data_service_address = "0xA983b18B8291F0c317Ba4Fe0dc0f7cc9373AF078"
+data_service_address = "0x7101d5c1a5c89c3647f5118da118e56c023ba0b9"
 
 # EIP-712 domain — must match the deployed GraphTallyCollector.
 eip712_domain_name = "GraphTallyCollector"

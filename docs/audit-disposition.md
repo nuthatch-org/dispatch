@@ -108,6 +108,18 @@ Not remediation. A fresh review of 365 lines, with the reviewer told plainly tha
 - The contract is UUPS with `_authorizeUpgrade` gated on `onlyOwner`, and the owner is currently a
   single EOA. Moving it to a Safe is tracked separately and is the highest-value non-code change.
 - The live pair is proxy `0x7101d5c1a5c89c3647f5118da118e56c023ba0b9` → implementation
-  `0x3527a12af6256634df6aa9cc2896ed9588e12de3` on Arbitrum One. The address
-  `0xA983b18B8291F0c317Ba4Fe0dc0f7cc9373AF078` appears in older material, holds code, and is a
-  **superseded implementation** — auditing it would review the wrong bytecode.
+  `0x3527a12af6256634df6aa9cc2896ed9588e12de3` on Arbitrum One. **The proxy has never been
+  upgraded**: it carries exactly one `Upgraded` event, at block 456,917,519, naming that
+  implementation, which is the one emitted on construction.
+- The address `0xA983b18B8291F0c317Ba4Fe0dc0f7cc9373AF078` appears in older material and holds
+  ~11 kB of code. It was described here as a "superseded implementation", which is wrong in a way
+  worth correcting: the proxy has never pointed at it, so it is a stray earlier deployment that was
+  never wired in rather than a previous version of this one. Auditing it would review bytecode that
+  has never served a request.
+- **It answers, and that is the dangerous part.** Called directly on 2026-08-30 it returned the same
+  `getThawingPeriodRange`, the same `getVerifierCutRange` and the same `owner` as the live proxy,
+  and a *different* `getProvisionTokensRange`: **10,000 GRT against the real 555**. An operator who
+  read the minimum provision off it would over-provision eighteenfold and see nothing wrong. The
+  usual advice about implementation contracts, that their uninitialised storage makes views return
+  zero, does not apply here: this one is initialised, so it returns stale values that look entirely
+  plausible.
