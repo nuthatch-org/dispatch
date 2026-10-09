@@ -1,6 +1,6 @@
 # Audit scope — RPCDataService
 
-**A brief somebody else can fund.** The Night's Watch has no budget for an external audit and will
+**A brief somebody else can fund.** Nuthatch has no budget for an external audit and will
 not acquire one. What we can do is make an audit cheap to buy and hard to waste: a tight scope, an
 honest list of what has already been established, and an explicit list of what not to pay for.
 
