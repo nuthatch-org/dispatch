@@ -44,13 +44,13 @@ pub struct FeedConfig {
 }
 
 fn default_standard() -> f64 {
-    6.0
+    3.0
 }
 fn default_archive() -> f64 {
-    7.0
+    5.0
 }
 fn default_trace() -> f64 {
-    8.0
+    6.0
 }
 fn default_feed_interval() -> u64 {
     300
