@@ -41,7 +41,7 @@ Method complexity sets the CU cost. Values below are confirmed from live receipt
 | `eth_call` | 10 | 40e-6 GRT |
 | `eth_getLogs` | 20 | 80e-6 GRT |
 
-**Concurrent dispatch multiplier:** The gateway is configured to dispatch to up to `concurrent_k = 3` providers simultaneously (first response wins), and all providers that respond receive a signed receipt — that is the cost of censorship-resistance and latency optimisation. With the network currently at 1 active provider, the effective multiplier is ×1. Once multiple providers are live, consumers pay the per-provider receipt value × k for each request.
+**Verification multiplier:** The gateway tries providers one at a time and pays only the one that answers; `concurrent_k` is the number of fallbacks, not a fan-out. Deterministic calls on settled blocks are cross-checked against a second provider on a 2% sample, so the effective multiplier is about ×1.02. Providers caught disagreeing get full quorum (×`quorum_k`) on their calls until the suspicion expires.
 
 ### USD cost at different GRT prices
 

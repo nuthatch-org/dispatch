@@ -10,6 +10,7 @@ use tower_http::trace::TraceLayer;
 use crate::affinity::FilterAffinity;
 use crate::attestation::Attestor;
 use crate::auth::ApiKeys;
+use crate::crosscheck::Suspects;
 use crate::rav_ledger::RavLedger;
 use crate::{config::Config, discovery, probe, provisioner, registry::Registry, routes};
 
@@ -35,6 +36,7 @@ pub struct AppState {
     pub rav_ledger: Arc<RavLedger>,
     pub attestor: Arc<Attestor>,
     pub api_keys: Arc<ApiKeys>,
+    pub suspects: Arc<Suspects>,
 }
 
 pub async fn run(config: Config) -> Result<()> {
@@ -89,6 +91,9 @@ pub async fn run(config: Config) -> Result<()> {
             config.tap.data_service_address,
         )),
         api_keys: Arc::new(ApiKeys::new(config.auth.as_ref())),
+        suspects: Arc::new(Suspects::new(std::time::Duration::from_secs(
+            config.qos.suspect_secs,
+        ))),
     };
 
     // Initialise prometheus metrics (lazy statics — triggers registration).

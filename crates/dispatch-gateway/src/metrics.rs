@@ -37,6 +37,12 @@ lazy_static! {
         &["key", "chain_id"]
     )
     .unwrap();
+    pub static ref CROSS_CHECKS_TOTAL: CounterVec = register_counter_vec!(
+        "dispatch_gateway_cross_checks_total",
+        "Sampled second opinions by outcome: agree, disagree, inconclusive or failed",
+        &["chain_id", "outcome"]
+    )
+    .unwrap();
 }
 
 /// Meter one served request against the caller.
