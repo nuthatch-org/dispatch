@@ -64,6 +64,7 @@ interface IRPCDataService {
     error RegistrationNotFound(address provider, uint64 chainId, CapabilityTier tier);
     error InvalidServiceProvider(address expected, address actual);
     error InvalidPaymentType();
+    error UnexpectedCollectedAmount(uint256 expected, uint256 actual);
 
     // -------------------------------------------------------------------------
     // Governance (owner-only)
