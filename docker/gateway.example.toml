@@ -91,11 +91,12 @@ concurrent_k        = 3
 # initial set until the first successful poll.
 #
 [discovery]
-# "chain" reads RPCDataService events through [chain] arbitrum_rpc_url, no subgraph needed.
-source        = "chain"
+# Providers are read from RPCDataService's own events.
+# "nest": a nuthatch nest indexing them (see docs/src/providers.md), queried over its /sql.
+# "chain": straight from Arbitrum through [chain] arbitrum_rpc_url, no other service.
+source        = "nest"
+nest_url      = "http://172.18.0.1:8120"
 interval_secs = 60
-# For source = "subgraph":
-# subgraph_url = "https://api.studio.thegraph.com/query/1747796/rpc-network/<version>"
 
 # ── Receipt feed API ──────────────────────────────────────────────────────
 # When configured, the gateway proxies GET /receipts/recent and GET /receipts

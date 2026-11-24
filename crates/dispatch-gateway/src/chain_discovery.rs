@@ -1,4 +1,4 @@
-//! Provider discovery from the contract's own events, with no subgraph in between.
+//! Provider discovery from the contract's own events, read from the chain or from a nuthatch nest.
 //!
 //! The hosted subgraph went stale once already: it kept indexing a superseded contract, listed
 //! providers that had left and missed the one that joined. Reading `RPCDataService` events from
@@ -261,6 +261,99 @@ impl ChainScanner {
     }
 }
 
+/// Reads the same four events from a nuthatch nest indexing `RPCDataService`, through its `/sql`.
+/// The nest has already decoded and ordered them; this only replays them.
+pub struct NestSource {
+    sql_url: String,
+}
+
+impl NestSource {
+    pub fn new(nest_url: &str) -> Self {
+        Self {
+            sql_url: format!("{}/sql", nest_url.trim_end_matches('/')),
+        }
+    }
+
+    pub async fn poll(&self, client: &reqwest::Client) -> anyhow::Result<Vec<ProviderConfig>> {
+        let mut rows: Vec<(u64, u64, Event)> = Vec::new();
+        for (table, cols) in [
+            (
+                "dispatch__provider_registered",
+                "provider, endpoint, \"geoHash\" AS geo",
+            ),
+            ("dispatch__provider_deregistered", "provider"),
+            (
+                "dispatch__service_started",
+                "provider, \"chainId\" AS chain, tier",
+            ),
+            (
+                "dispatch__service_stopped",
+                "provider, \"chainId\" AS chain, tier",
+            ),
+        ] {
+            let q = format!("SELECT block_number, log_index, {cols} FROM {table}");
+            let resp: serde_json::Value = client
+                .post(&self.sql_url)
+                .json(&serde_json::json!({ "q": q, "max_rows": 10000 }))
+                .send()
+                .await?
+                .json()
+                .await?;
+            if let Some(e) = resp.get("error") {
+                anyhow::bail!("{table}: {e}");
+            }
+            if resp["truncated"].as_bool() == Some(true) {
+                anyhow::bail!("{table}: more than 10000 rows, refusing a partial provider list");
+            }
+            for r in resp["rows"].as_array().cloned().unwrap_or_default() {
+                let num = |k: &str| {
+                    r[k].as_u64()
+                        .or_else(|| r[k].as_str().and_then(|s| s.parse().ok()))
+                };
+                let text = |k: &str| r[k].as_str().unwrap_or_default().to_string();
+                let Ok(provider) = text("provider").parse::<Address>() else {
+                    continue;
+                };
+                let (Some(block), Some(idx)) = (num("block_number"), num("log_index")) else {
+                    continue;
+                };
+                let ev = match table {
+                    "dispatch__provider_registered" => Event::Registered {
+                        provider,
+                        endpoint: text("endpoint"),
+                        geo_hash: text("geo"),
+                    },
+                    "dispatch__provider_deregistered" => Event::Deregistered { provider },
+                    _ => {
+                        let (Some(chain_id), Some(tier)) = (num("chain"), num("tier")) else {
+                            continue;
+                        };
+                        let tier = tier as u8;
+                        if table == "dispatch__service_started" {
+                            Event::Started {
+                                provider,
+                                chain_id,
+                                tier,
+                            }
+                        } else {
+                            Event::Stopped {
+                                provider,
+                                chain_id,
+                                tier,
+                            }
+                        }
+                    }
+                };
+                rows.push((block, idx, ev));
+            }
+        }
+        rows.sort_by_key(|(b, i, _)| (*b, *i));
+        Ok(fold(
+            &rows.into_iter().map(|(_, _, e)| e).collect::<Vec<_>>(),
+        ))
+    }
+}
+
 fn hex_u64(s: &str) -> u64 {
     u64::from_str_radix(s.trim_start_matches("0x"), 16).unwrap_or(0)
 }
@@ -358,5 +451,47 @@ mod tests {
                 geo_hash: "u0".into()
             })
         );
+    }
+
+    #[tokio::test]
+    async fn the_nest_source_replays_its_tables_in_chain_order() {
+        use axum::{routing::post, Json, Router};
+        use serde_json::{json, Value};
+
+        // Rows arrive per table and out of chain order; numbers sometimes as strings.
+        async fn sql(Json(body): Json<Value>) -> Json<Value> {
+            let q = body["q"].as_str().unwrap_or_default().to_string();
+            let p = "0x0101010101010101010101010101010101010101";
+            let rows = if q.contains("provider_registered") {
+                json!([{ "block_number": 10, "log_index": 0, "provider": p, "endpoint": "https://one", "geo": "u0" }])
+            } else if q.contains("service_started") {
+                json!([
+                    { "block_number": 12, "log_index": 1, "provider": p, "chain": 10, "tier": 0 },
+                    { "block_number": "11", "log_index": "0", "provider": p, "chain": "10", "tier": "2" }
+                ])
+            } else if q.contains("service_stopped") {
+                json!([{ "block_number": 13, "log_index": 0, "provider": p, "chain": 10, "tier": 2 }])
+            } else {
+                json!([])
+            };
+            Json(json!({ "rows": rows, "truncated": false }))
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, Router::new().route("/sql", post(sql)))
+                .await
+                .unwrap()
+        });
+
+        let p = NestSource::new(&format!("http://{addr}"))
+            .poll(&reqwest::Client::new())
+            .await
+            .unwrap();
+        assert_eq!(p.len(), 1);
+        assert_eq!(p[0].endpoint, "https://one");
+        // Debug started at 11 and stopped at 13; standard started at 12 and stays.
+        assert_eq!(p[0].chain_capabilities[&10], vec![CapabilityTier::Standard]);
     }
 }
