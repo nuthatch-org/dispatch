@@ -13,7 +13,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::{
-    affinity, config::CapabilityTier, error::GatewayError, metrics, registry::Provider, selector,
+    affinity, attestation::Attestor, auth::Caller, config::CapabilityTier, crosscheck,
+    error::GatewayError, metrics, pricing::PriceClass, registry::Provider, selector,
     server::AppState,
 };
 use dispatch_tap::create_receipt;
@@ -37,24 +38,30 @@ async fn rpc_handler(
     Json(body): Json<Value>,
 ) -> Result<Response, GatewayError> {
     let consumer = extract_consumer_address(&headers)?;
-    dispatch_rpc(state, chain_id, peer, consumer, body).await
+    let caller = state.api_keys.authenticate(None, &headers)?;
+    dispatch_rpc(state, chain_id, peer, consumer, caller, body).await
 }
 
-/// Route handler for POST /rpc/{chain_id}/{consumer_address}
+/// Route handler for POST /rpc/{chain_id}/{key_or_consumer}
 ///
-/// Consumer address embedded in the URL path — for clients that cannot set
-/// custom HTTP headers (e.g. graph-node, Ethereum execution clients).
-/// The address must be a valid checksummed or lowercase Ethereum address.
+/// For clients that cannot set headers, such as graph-node. The segment is an API key, or, for
+/// older configs, a consumer address.
 async fn rpc_handler_with_consumer(
     State(state): State<AppState>,
-    Path((chain_id, consumer_str)): Path<(u64, String)>,
+    Path((chain_id, segment)): Path<(u64, String)>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<Response, GatewayError> {
-    let consumer = consumer_str
-        .parse::<Address>()
-        .map_err(|_| GatewayError::InvalidConsumerAddress(consumer_str))?;
-    dispatch_rpc(state, chain_id, peer, consumer, body).await
+    let (consumer, path_key) = match segment.parse::<Address>() {
+        Ok(addr) => (addr, None),
+        Err(_) if segment.starts_with("0x") => {
+            return Err(GatewayError::InvalidConsumerAddress(segment))
+        }
+        Err(_) => (Address::ZERO, Some(segment.as_str())),
+    };
+    let caller = state.api_keys.authenticate(path_key, &headers)?;
+    dispatch_rpc(state, chain_id, peer, consumer, caller, body).await
 }
 
 /// Unified multi-chain endpoint — chain selected via the `X-Chain-Id` header.
@@ -71,7 +78,8 @@ async fn rpc_handler_unified(
         .and_then(|s| s.parse().ok())
         .unwrap_or(1);
     let consumer = extract_consumer_address(&headers)?;
-    dispatch_rpc(state, chain_id, peer, consumer, body).await
+    let caller = state.api_keys.authenticate(None, &headers)?;
+    dispatch_rpc(state, chain_id, peer, consumer, caller, body).await
 }
 
 /// Shared dispatch logic. Applies rate limit, then handles single or batch JSON-RPC.
@@ -80,6 +88,7 @@ async fn dispatch_rpc(
     chain_id: u64,
     peer: SocketAddr,
     consumer: Address,
+    caller: Caller,
     body: Value,
 ) -> Result<Response, GatewayError> {
     // --- Per-IP rate limiting ---
@@ -88,6 +97,10 @@ async fn dispatch_rpc(
             return Err(GatewayError::RateLimited);
         }
     }
+    caller.check_rate(match &body {
+        Value::Array(items) => items.len() as u32,
+        _ => 1,
+    })?;
 
     match body {
         Value::Array(items) => {
@@ -103,7 +116,7 @@ async fn dispatch_rpc(
             let responses: Vec<Value> = join_all(
                 requests
                     .iter()
-                    .map(|req| process_request(&state, chain_id, req, consumer)),
+                    .map(|req| process_request(&state, chain_id, req, consumer, &caller)),
             )
             .await
             .into_iter()
@@ -123,7 +136,7 @@ async fn dispatch_rpc(
             let request: JsonRpcRequest = serde_json::from_value(body)
                 .map_err(|e| GatewayError::InvalidRequest(e.to_string()))?;
             let (response, attestation) =
-                process_request(&state, chain_id, &request, consumer).await?;
+                process_request(&state, chain_id, &request, consumer, &caller).await?;
             let mut resp = Json(response).into_response();
             if let Some(att) = attestation {
                 if let Ok(val) = att.parse() {
@@ -267,10 +280,12 @@ async fn process_request(
     chain_id: u64,
     request: &JsonRpcRequest,
     consumer: Address,
+    caller: &Caller,
 ) -> Result<(JsonRpcResponse, Option<String>), GatewayError> {
     request.validate()?;
 
-    let candidates = {
+    let deterministic = requires_quorum(&request.method);
+    let (candidates, chain_head) = {
         let registry = state.registry.load();
         let (providers, chain_head) = registry
             .providers_for_chain(chain_id)
@@ -303,25 +318,38 @@ async fn process_request(
             &capable,
             |p| p.address,
         );
-        if let Some(provider) = pinned {
+        let candidates = if let Some(provider) = pinned {
             vec![provider]
         } else {
             selector::select(
                 &capable,
                 chain_head,
-                if requires_quorum(&request.method) {
-                    state.config.qos.quorum_k
+                if deterministic {
+                    state.config.qos.quorum_k.max(state.config.qos.concurrent_k)
                 } else {
                     state.config.qos.concurrent_k
                 },
                 state.config.gateway.region.as_deref(),
                 state.config.qos.region_bonus,
             )
-        }
+        };
+        (candidates, chain_head)
     };
 
+    let full_quorum = deterministic
+        && (state.config.qos.quorum_always
+            || candidates
+                .first()
+                .is_some_and(|p| state.suspects.is_suspect(p.address)));
+
     let cu = cu_weight_for(&request.method);
-    let receipt_value = cu as u128 * state.config.tap.base_price_per_cu;
+    let receipt_value = match &state.pricer {
+        Some(p) => p.receipt_value(PriceClass::of(
+            &request.method,
+            &required_tier(&request.method, &request.params),
+        )),
+        None => cu as u128 * state.config.tap.base_price_per_cu,
+    };
 
     // Encode gateway payer address (bytes 0-19) + method name (bytes 20+) in metadata.
     // Providers extract bytes 0-19 for escrow routing — this is always the gateway's
@@ -335,14 +363,15 @@ async fn process_request(
 
     let start = Instant::now();
 
-    let (response, attestation, winner) = if requires_quorum(&request.method) {
+    let (response, attestation, winner) = if full_quorum {
+        let k = state.config.qos.quorum_k.min(candidates.len());
         dispatch_quorum(
             state,
             chain_id,
             request,
-            &candidates,
+            &candidates[..k],
             receipt_value,
-            consumer_metadata,
+            consumer_metadata.clone(),
         )
         .await?
     } else {
@@ -352,10 +381,29 @@ async fn process_request(
             request,
             &candidates,
             receipt_value,
-            consumer_metadata,
+            consumer_metadata.clone(),
         )
         .await?
     };
+
+    if deterministic
+        && !full_quorum
+        && rand::random::<f64>() < state.config.qos.cross_check_rate
+        && crosscheck::is_settled(&request.method, &request.params, chain_head)
+    {
+        if let Some(other) = candidates.iter().find(|p| p.address != winner.address) {
+            spawn_cross_check(
+                state.clone(),
+                chain_id,
+                request.clone(),
+                response.result.clone(),
+                winner.address,
+                other.clone(),
+                receipt_value,
+                consumer_metadata,
+            );
+        }
+    }
 
     // Remember which node owns a newly created filter, and forget it once uninstalled. Only on a
     // successful response: an errored create has no id to pin, and forgetting on a failed
@@ -385,12 +433,15 @@ async fn process_request(
         "ok"
     };
     metrics::record(chain_id, &request.method, outcome, duration);
+    // Charged whenever a provider answered, error or not: its receipt has already been paid.
+    metrics::record_usage(caller.label(), chain_id, cu);
 
     tracing::debug!(
         method = %request.method,
         chain_id,
         provider = %winner.endpoint,
         consumer = %consumer,
+        key = caller.label(),
         cu,
         "served"
     );
@@ -398,19 +449,89 @@ async fn process_request(
     Ok((response, attestation))
 }
 
+/// Ask a second provider the same question off the hot path. A disagreement on a settled block
+/// means one of them is wrong; both go to full quorum until the suspicion expires.
+#[allow(clippy::too_many_arguments)]
+fn spawn_cross_check(
+    state: AppState,
+    chain_id: u64,
+    request: JsonRpcRequest,
+    first: Option<Value>,
+    first_provider: Address,
+    other: Arc<Provider>,
+    receipt_value: u128,
+    metadata: Bytes,
+) {
+    tokio::spawn(async move {
+        let second = dispatch_concurrent(
+            &state,
+            chain_id,
+            &request,
+            std::slice::from_ref(&other),
+            receipt_value,
+            metadata,
+        )
+        .await;
+        let outcome = match &second {
+            Ok((resp, _, _)) => crosscheck::compare(first.as_ref(), resp.result.as_ref()),
+            Err(_) => {
+                metrics::CROSS_CHECKS_TOTAL
+                    .with_label_values(&[&chain_id.to_string(), "failed"])
+                    .inc();
+                return;
+            }
+        };
+        if outcome == crosscheck::Outcome::Disagree {
+            state.suspects.mark(first_provider);
+            state.suspects.mark(other.address);
+            tracing::warn!(
+                method = %request.method,
+                chain_id,
+                first = %first_provider,
+                second = %other.address,
+                "cross-check disagreement on a settled block"
+            );
+        }
+        metrics::CROSS_CHECKS_TOTAL
+            .with_label_values(&[&chain_id.to_string(), outcome.label()])
+            .inc();
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Attestation verification
 // ---------------------------------------------------------------------------
 
-/// Parse and verify the X-Drpc-Attestation header.
-/// Returns the recovered signer address as a string, or None if absent/invalid.
+/// Keep an attestation only if its signer may act for the provider that served the response.
+async fn bind_attestation(
+    attestor: &Attestor,
+    client: &reqwest::Client,
+    provider: Address,
+    verified: Option<(String, Address)>,
+) -> Option<String> {
+    let (outcome, kept) = match verified {
+        Some((header, signer)) if attestor.is_bound(client, provider, signer).await => {
+            ("bound", Some(header))
+        }
+        Some(_) => ("unbound", None),
+        None => ("missing", None),
+    };
+    metrics::ATTESTATIONS_TOTAL
+        .with_label_values(&[&format!("{provider:?}"), outcome])
+        .inc();
+    kept
+}
+
+/// Parse the X-Drpc-Attestation header and check its signature over this response.
+/// Returns the header and recovered signer, or None if absent/invalid. Says nothing about
+/// whether the signer belongs to the provider; see `bind_attestation`.
 fn verify_attestation(
     attestation_header: Option<&str>,
     chain_id: u64,
     method: &str,
     params_json: &str,
     result_json: &str,
-) -> Option<String> {
+) -> Option<(String, Address)> {
     let header = attestation_header?;
 
     #[derive(serde::Deserialize)]
@@ -441,7 +562,7 @@ fn verify_attestation(
         return None;
     }
 
-    Some(header.to_string())
+    Some((header.to_string(), recovered))
 }
 
 // ---------------------------------------------------------------------------
@@ -546,13 +667,19 @@ async fn dispatch_concurrent(
             _ => "null".to_string(),
         };
 
-        let attestation = verify_attestation(
+        let verified = verify_attestation(
             att_header.as_deref(),
             chain_id,
             &request.method,
             &params_json,
             &result_json,
         );
+        let attestation =
+            bind_attestation(&state.attestor, &state.http_client, p.address, verified).await;
+        if attestation.is_none() && state.config.qos.require_attestation {
+            p.qos.record_failure();
+            continue;
+        }
 
         p.qos.record_success(ms);
         return Ok((body, attestation, p));
@@ -588,6 +715,8 @@ async fn dispatch_quorum(
             let params_json = params_json.clone();
             let method = request.method.clone();
             let metadata = consumer_metadata.clone();
+            let attestor = state.attestor.clone();
+            let require_attestation = state.config.qos.require_attestation;
 
             async move {
                 let signed = create_receipt(
@@ -638,13 +767,18 @@ async fn dispatch_quorum(
                     _ => "null".to_string(),
                 };
 
-                let attestation = verify_attestation(
+                let verified = verify_attestation(
                     att_header.as_deref(),
                     chain_id,
                     &method,
                     &params_json,
                     &result_json,
                 );
+                let attestation = bind_attestation(&attestor, &client, p.address, verified).await;
+                if attestation.is_none() && require_attestation {
+                    p.qos.record_failure();
+                    return Err("no attestation bound to the provider".to_string());
+                }
 
                 p.qos.record_success(ms);
                 Ok::<_, String>((body, result_json, attestation, p))
@@ -1056,6 +1190,12 @@ mod tests {
 
         assert!(
             verify_attestation(Some(&att), chain_id, method, params_json, result_json).is_some()
+        );
+        assert_eq!(
+            verify_attestation(Some(&att), chain_id, method, params_json, result_json)
+                .map(|(_, recovered)| recovered),
+            Some(signer),
+            "the recovered signer is what gets checked against the provider"
         );
     }
 }

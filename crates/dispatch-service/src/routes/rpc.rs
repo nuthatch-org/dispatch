@@ -12,6 +12,7 @@ use serde_json::Value;
 use crate::{
     attestation, db,
     error::ServiceError,
+    metrics,
     rpc::{proxy, types::JsonRpcRequest},
     server::AppState,
     tap,
@@ -35,96 +36,26 @@ async fn rpc_handler(
         .ok_or(ServiceError::UnsupportedChain(chain_id))?
         .clone();
 
-    // --- TAP receipt validation (shared by single and batch) ---
-    let receipt_header = headers
-        .get("TAP-Receipt")
-        .ok_or(ServiceError::MissingReceipt)?
-        .to_str()
-        .map_err(|_| ServiceError::InvalidReceipt("non-UTF8 TAP-Receipt header".to_string()))?;
-
-    let now_ns = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos() as u64;
-
-    let validated = tap::validate_receipt(
-        receipt_header,
-        state.tap_domain_separator,
-        &state.config.tap.authorized_senders,
-        state.config.tap.data_service_address,
-        state.config.indexer.service_provider_address,
-        state.config.tap.max_receipt_age_ns,
-        now_ns,
-    )?;
-
-    // --- Escrow balance pre-check (cached 30 s) ---
-    // Check the consumer's (payer's) escrow, not the gateway signer's.
-    let bypass = state.config.tap.bypass_consumers.contains(&validated.payer);
-    // escrow_verified: true if on-chain balance confirmed > 0 (skips credit check below).
-    let mut escrow_verified = false;
-    if bypass {
-        tracing::debug!(payer = %validated.payer, "escrow check bypassed (bypass_consumers list)");
-    } else if let Some(checker) = &state.escrow_checker {
-        match checker.balance(validated.payer).await {
-            Ok(0) => {
-                tracing::warn!(
-                    payer = %validated.payer,
-                    "consumer escrow balance is zero — rejecting request"
-                );
-                return Err(ServiceError::InsufficientEscrow);
-            }
-            Ok(bal) => {
-                tracing::debug!(payer = %validated.payer, balance = bal, "escrow ok");
-                escrow_verified = true; // On-chain escrow confirmed — skip credit gate.
-            }
-            Err(e) => {
-                // Don't block the request if the check itself fails — log and continue.
-                tracing::warn!(error = %e, payer = %validated.payer, "escrow check failed, proceeding anyway");
-            }
-        }
-    }
-
-    // --- Credit limit check (fallback when escrow is not configured or unverified) ---
-    // Skipped when on-chain escrow was verified above — the chain is the payment gate.
-    if !bypass && !escrow_verified {
-        let credit = state.consumer_credit.read().unwrap();
-        let served = credit.get(&validated.payer).copied().unwrap_or(0);
-        if served >= state.config.tap.credit_threshold {
-            tracing::warn!(
-                payer = %validated.payer,
-                served,
-                threshold = state.config.tap.credit_threshold,
-                "consumer credit limit reached"
-            );
-            return Err(ServiceError::CreditLimitExceeded);
-        }
-    }
+    let items = match &body {
+        Value::Array(a) => a.len() as u128,
+        _ => 1,
+    };
+    let validated = admit(&state, &headers, items).await?;
 
     match body {
         Value::Array(items) => {
             let requests = parse_batch(items)?;
             tracing::debug!(count = requests.len(), chain_id, "dispatching batch");
 
-            let responses =
-                proxy::forward_batch(&state.http_client, &backend_url, &requests).await?;
+            let started = std::time::Instant::now();
+            let responses = observe(
+                chain_id,
+                started,
+                proxy::forward_batch(&state.http_client, &backend_url, &requests).await,
+            )?;
+            paid(chain_id, validated.receipt.value);
 
-            // --- Increment consumer credit ---
-            {
-                let mut credit = state.consumer_credit.write().unwrap();
-                *credit.entry(validated.payer).or_insert(0) += validated.receipt.value;
-            }
-
-            // --- Persist receipt (non-fatal if DB is unavailable) ---
-            if let Some(pool) = &state.db_pool {
-                if let Err(e) = db::receipts::insert(pool, chain_id, &validated).await {
-                    tracing::warn!(
-                        error = %e,
-                        signer = %validated.signer,
-                        chain_id,
-                        "failed to persist TAP receipt (batch)"
-                    );
-                }
-            }
+            settle(&state, chain_id, &validated).await;
 
             Ok(Json(responses).into_response())
         }
@@ -136,25 +67,15 @@ async fn rpc_handler(
             tracing::debug!(method = %request.method, chain_id, "dispatching");
 
             // --- Forward to backend Ethereum client ---
-            let response = proxy::forward(&state.http_client, &backend_url, &request).await?;
+            let started = std::time::Instant::now();
+            let response = observe(
+                chain_id,
+                started,
+                proxy::forward(&state.http_client, &backend_url, &request).await,
+            )?;
+            paid(chain_id, validated.receipt.value);
 
-            // --- Increment consumer credit ---
-            {
-                let mut credit = state.consumer_credit.write().unwrap();
-                *credit.entry(validated.payer).or_insert(0) += validated.receipt.value;
-            }
-
-            // --- Persist receipt (non-fatal if DB is unavailable) ---
-            if let Some(pool) = &state.db_pool {
-                if let Err(e) = db::receipts::insert(pool, chain_id, &validated).await {
-                    tracing::warn!(
-                        error = %e,
-                        signer = %validated.signer,
-                        chain_id,
-                        "failed to persist TAP receipt"
-                    );
-                }
-            }
+            settle(&state, chain_id, &validated).await;
 
             // --- Sign the response ---
             let params_json =
@@ -213,6 +134,129 @@ fn parse_batch(items: Vec<Value>) -> Result<Vec<JsonRpcRequest>, ServiceError> {
             Ok(req)
         })
         .collect()
+}
+
+/// Check the TAP receipt, the payer's escrow and its credit before serving anything.
+pub(crate) async fn admit(
+    state: &AppState,
+    headers: &HeaderMap,
+    items: u128,
+) -> Result<tap::ValidatedReceipt, ServiceError> {
+    // --- TAP receipt validation (shared by single and batch) ---
+    let receipt_header = headers
+        .get("TAP-Receipt")
+        .ok_or(ServiceError::MissingReceipt)?
+        .to_str()
+        .map_err(|_| ServiceError::InvalidReceipt("non-UTF8 TAP-Receipt header".to_string()))?;
+
+    let now_ns = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
+
+    let validated = tap::validate_receipt(
+        receipt_header,
+        state.tap_domain_separator,
+        &state.config.tap.authorized_senders,
+        state.config.tap.data_service_address,
+        state.config.indexer.service_provider_address,
+        state.config.tap.max_receipt_age_ns,
+        now_ns,
+    )?;
+
+    let min = state.config.tap.min_value_per_request.saturating_mul(items);
+    if validated.receipt.value < min {
+        return Err(ServiceError::Underpriced {
+            got: validated.receipt.value,
+            min,
+        });
+    }
+
+    // --- Escrow balance pre-check (cached 30 s) ---
+    // Check the consumer's (payer's) escrow, not the gateway signer's.
+    let bypass = state.config.tap.bypass_consumers.contains(&validated.payer);
+    // escrow_verified: true if on-chain balance confirmed > 0 (skips credit check below).
+    let mut escrow_verified = false;
+    if bypass {
+        tracing::debug!(payer = %validated.payer, "escrow check bypassed (bypass_consumers list)");
+    } else if let Some(checker) = &state.escrow_checker {
+        match checker.balance(validated.payer).await {
+            Ok(0) => {
+                tracing::warn!(
+                    payer = %validated.payer,
+                    "consumer escrow balance is zero — rejecting request"
+                );
+                return Err(ServiceError::InsufficientEscrow);
+            }
+            Ok(bal) => {
+                tracing::debug!(payer = %validated.payer, balance = bal, "escrow ok");
+                escrow_verified = true; // On-chain escrow confirmed — skip credit gate.
+            }
+            Err(e) => {
+                // Don't block the request if the check itself fails — log and continue.
+                tracing::warn!(error = %e, payer = %validated.payer, "escrow check failed, proceeding anyway");
+            }
+        }
+    }
+
+    // --- Credit limit check (fallback when escrow is not configured or unverified) ---
+    // Skipped when on-chain escrow was verified above — the chain is the payment gate.
+    if !bypass && !escrow_verified {
+        let credit = state.consumer_credit.read().unwrap();
+        let served = credit.get(&validated.payer).copied().unwrap_or(0);
+        if served >= state.config.tap.credit_threshold {
+            tracing::warn!(
+                payer = %validated.payer,
+                served,
+                threshold = state.config.tap.credit_threshold,
+                "consumer credit limit reached"
+            );
+            return Err(ServiceError::CreditLimitExceeded);
+        }
+    }
+
+    Ok(validated)
+}
+
+/// Count a served receipt against the payer's credit and keep it for aggregation.
+pub(crate) async fn settle(state: &AppState, chain_id: u64, validated: &tap::ValidatedReceipt) {
+    {
+        let mut credit = state.consumer_credit.write().unwrap();
+        *credit.entry(validated.payer).or_insert(0) += validated.receipt.value;
+    }
+    // Non-fatal if the DB is unavailable.
+    if let Some(pool) = &state.db_pool {
+        if let Err(e) = db::receipts::insert(pool, chain_id, validated).await {
+            tracing::warn!(
+                error = %e,
+                signer = %validated.signer,
+                chain_id,
+                "failed to persist TAP receipt"
+            );
+        }
+    }
+}
+
+fn observe<T>(
+    chain_id: u64,
+    started: std::time::Instant,
+    result: Result<T, ServiceError>,
+) -> Result<T, ServiceError> {
+    let chain = chain_id.to_string();
+    let outcome = if result.is_ok() { "ok" } else { "error" };
+    metrics::REQUESTS_TOTAL
+        .with_label_values(&[&chain, outcome])
+        .inc();
+    metrics::REQUEST_DURATION
+        .with_label_values(&[&chain])
+        .observe(started.elapsed().as_secs_f64());
+    result
+}
+
+fn paid(chain_id: u64, value: u128) {
+    metrics::RECEIPT_GRT_TOTAL
+        .with_label_values(&[&chain_id.to_string()])
+        .inc_by(metrics::grt(value));
 }
 
 #[cfg(test)]
@@ -305,5 +349,33 @@ mod tests {
         let items = vec![json!({"jsonrpc": "2.0", "method": "eth_blockNumber"})];
         let reqs = parse_batch(items).unwrap();
         assert_eq!(reqs[0].id, None);
+    }
+
+    #[tokio::test]
+    async fn receipts_below_the_floor_are_refused_and_a_batch_must_cover_every_item() {
+        use crate::routes::test_support::{receipt_header, serve};
+
+        let (addr, state) = serve("min_value_per_request = 1000", "").await;
+        let post = |value: u128, body: serde_json::Value| {
+            let header = receipt_header(&state, value);
+            async move {
+                reqwest::Client::new()
+                    .post(format!("http://{addr}/rpc/1"))
+                    .header("TAP-Receipt", header)
+                    .json(&body)
+                    .send()
+                    .await
+                    .unwrap()
+                    .status()
+                    .as_u16()
+            }
+        };
+        let call = json!({"jsonrpc": "2.0", "method": "eth_blockNumber", "params": [], "id": 1});
+
+        assert_eq!(post(999, call.clone()).await, 402);
+        // Admitted, then the unreachable backend answers 502: past the floor.
+        assert_eq!(post(1000, call.clone()).await, 502);
+        assert_eq!(post(1000, json!([call.clone(), call.clone()])).await, 402);
+        assert_eq!(post(2000, json!([call.clone(), call])).await, 502);
     }
 }

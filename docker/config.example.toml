@@ -43,12 +43,17 @@ aggregator_url = "http://dispatch-gateway:8080"
 # Maximum unconfirmed GRT wei per consumer before rejecting (default: 0.1 GRT).
 # credit_threshold = 100_000_000_000_000_000
 
+# Refuse receipts worth less than this (GRT wei) per request; a batch must cover every item.
+# min_value_per_request = 0
+
 # Arbitrum One RPC for escrow balance pre-checks (cached 30s per consumer).
 # Falls back to [collector].arbitrum_rpc_url when omitted.
 # Disable both to skip escrow checks (not recommended for production).
 # escrow_check_rpc_url = "https://arb1.arbitrum.io/rpc"
 
 [chains]
+# Serve /ws/{chain_id}. One receipt pays for a whole connection, so it is off by default.
+# websocket = false
 # Chain IDs this node is registered to serve.
 # Must match the chains passed to RPCDataService.startService() on-chain.
 # Supported chain IDs (add any subset you run backends for):

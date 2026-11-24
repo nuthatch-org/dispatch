@@ -1,0 +1,55 @@
+# ── Dispatch provider sidecar ─────────────────────────────────────────────────
+#
+# For an operator who already runs an Ethereum node, usually for graph-node.
+# Runs dispatch-service and its Postgres beside that node; nothing else.
+#
+#   cp docker/config.example.toml docker/config.toml
+#   # Set your provider address, operator key and backends. A node on this host is
+#   # reachable as http://host.docker.internal:8545 from inside the container.
+#   docker compose -f docker/provider-compose.yml up -d
+#   curl -s http://127.0.0.1:7700/health
+#
+# Put your reverse proxy (Caddy, nginx) in front of 127.0.0.1:7700 with TLS, and
+# advertise that public URL when you register.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: dispatch
+      POSTGRES_PASSWORD: dispatch
+      POSTGRES_DB: dispatch
+    volumes:
+      - provider_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dispatch"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  dispatch-service:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.service
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:7700:7700"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./config.toml:/etc/dispatch/config.toml:ro
+    environment:
+      DISPATCH_CONFIG: /etc/dispatch/config.toml
+      RUST_LOG: info
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:7700/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+volumes:
+  provider_postgres:

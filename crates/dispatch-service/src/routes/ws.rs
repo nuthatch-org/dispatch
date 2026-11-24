@@ -9,6 +9,7 @@ use axum::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         Path, State,
     },
+    http::HeaderMap,
     response::IntoResponse,
     routing::get,
     Router,
@@ -16,7 +17,11 @@ use axum::{
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message as TungMsg;
 
-use crate::{error::ServiceError, server::AppState};
+use crate::{
+    error::ServiceError,
+    routes::rpc::{admit, settle},
+    server::AppState,
+};
 
 pub fn router() -> Router<AppState> {
     Router::new().route("/ws/:chain_id", get(ws_handler))
@@ -26,7 +31,11 @@ async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
     Path(chain_id): Path<u64>,
+    headers: HeaderMap,
 ) -> Result<impl IntoResponse, ServiceError> {
+    if !state.config.chains.websocket {
+        return Err(ServiceError::WebSocketDisabled);
+    }
     let backend_http = state
         .config
         .chains
@@ -34,6 +43,9 @@ async fn ws_handler(
         .get(&chain_id.to_string())
         .ok_or(ServiceError::UnsupportedChain(chain_id))?
         .clone();
+
+    let validated = admit(&state, &headers, 1).await?;
+    settle(&state, chain_id, &validated).await;
 
     // Convert the HTTP backend URL to a WebSocket URL.
     let backend_ws = backend_http
@@ -109,5 +121,25 @@ fn tung_to_axum(msg: TungMsg) -> Option<Message> {
         TungMsg::Pong(b) => Some(Message::Pong(b)),
         TungMsg::Close(_) => None,
         TungMsg::Frame(_) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::routes::test_support::serve;
+
+    async fn status_of(url: &str) -> u16 {
+        match tokio_tungstenite::connect_async(url).await {
+            Err(tokio_tungstenite::tungstenite::Error::Http(resp)) => resp.status().as_u16(),
+            other => panic!("expected the upgrade to be refused, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn disabled_by_default_and_refused_without_a_receipt_when_enabled() {
+        let (off, _) = serve("", "").await;
+        assert_eq!(status_of(&format!("ws://{off}/ws/1")).await, 404);
+        let (on, _) = serve("", "websocket = true").await;
+        assert_eq!(status_of(&format!("ws://{on}/ws/1")).await, 401);
     }
 }

@@ -28,6 +28,8 @@ Fully pay-per-request via **GraphTally (TAP v2)** micropayments. No epoch, no al
 
 ### Pricing model
 
+With a `[pricing]` section the gateway prices in USD per million requests, by class: standard, archive, and trace (`debug_*`, `trace_*` and `eth_getLogs`). The suggested list is $1, $3 and $4, just under dRPC's flat $4.20 to $6. Each receipt's GRT value is worked out from the current GRT/USD rate when it is signed, so providers are still paid in GRT and the buyer's price does not move with it. `GET /pricing` publishes the live list and rate. The CU model below applies when `[pricing]` is absent.
+
 The gateway charges per **compute unit (CU)**, where one CU = `4_000_000_000_000` GRT wei = `4e-6 GRT`.
 
 Method complexity sets the CU cost. Values below are confirmed from live receipt data:
@@ -41,7 +43,7 @@ Method complexity sets the CU cost. Values below are confirmed from live receipt
 | `eth_call` | 10 | 40e-6 GRT |
 | `eth_getLogs` | 20 | 80e-6 GRT |
 
-**Concurrent dispatch multiplier:** The gateway is configured to dispatch to up to `concurrent_k = 3` providers simultaneously (first response wins), and all providers that respond receive a signed receipt — that is the cost of censorship-resistance and latency optimisation. With the network currently at 1 active provider, the effective multiplier is ×1. Once multiple providers are live, consumers pay the per-provider receipt value × k for each request.
+**Verification multiplier:** The gateway tries providers one at a time and pays only the one that answers; `concurrent_k` is the number of fallbacks, not a fan-out. Deterministic calls on settled blocks are cross-checked against a second provider on a 2% sample, so the effective multiplier is about ×1.02. Providers caught disagreeing get full quorum (×`quorum_k`) on their calls until the suspicion expires.
 
 ### USD cost at different GRT prices
 

@@ -1,6 +1,8 @@
 pub mod health;
 pub mod receipts;
 pub mod rpc;
+#[cfg(test)]
+mod test_support;
 pub mod ws;
 
 use crate::server::AppState;

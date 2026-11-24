@@ -55,38 +55,47 @@ async fn probe_all(state: &AppState) {
 
                 let start = Instant::now();
 
-                match client.get(&url).send().await {
-                    Ok(resp) if resp.status().is_success() => {
-                        let ms = start.elapsed().as_millis() as u64;
-
-                        if let Ok(json) = resp.json::<Value>().await {
-                            let block = parse_block_number(&json);
-
-                            provider.qos.record_success(ms);
-
-                            if let Some(block) = block {
-                                provider.qos.update_latest_block(block);
-                                if let Some(cs) = chain_state {
-                                    cs.update_head(block);
-                                }
-                            }
-
-                            tracing::debug!(
-                                provider = %provider.endpoint,
-                                chain_id,
-                                latency_ms = ms,
-                                block,
-                                "probe ok"
-                            );
+                // An answer without a block number is not an answer.
+                let answered = match client.get(&url).send().await {
+                    Ok(resp) if resp.status().is_success() => resp
+                        .json::<Value>()
+                        .await
+                        .ok()
+                        .and_then(|j| parse_block_number(&j)),
+                    _ => None,
+                };
+                {
+                    let mut probes = provider.probes.lock().unwrap();
+                    let rec = probes.entry(chain_id).or_default();
+                    match answered {
+                        Some(block) => {
+                            rec.last_ok = Some(Instant::now());
+                            rec.block = Some(block);
+                            rec.consecutive_failures = 0;
                         }
+                        None => rec.consecutive_failures += 1,
                     }
-                    _ => {
-                        provider.qos.record_failure();
+                }
+
+                match answered {
+                    Some(block) => {
+                        let ms = start.elapsed().as_millis() as u64;
+                        provider.qos.record_success(ms);
+                        provider.qos.update_latest_block(block);
+                        if let Some(cs) = chain_state {
+                            cs.update_head(block);
+                        }
                         tracing::debug!(
                             provider = %provider.endpoint,
                             chain_id,
-                            "probe failed"
+                            latency_ms = ms,
+                            block,
+                            "probe ok"
                         );
+                    }
+                    None => {
+                        provider.qos.record_failure();
+                        tracing::debug!(provider = %provider.endpoint, chain_id, "probe failed");
                     }
                 }
             });

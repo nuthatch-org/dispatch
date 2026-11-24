@@ -164,6 +164,10 @@ pub fn spawn(
                     .await
                     {
                         Ok(Ok(_)) => {
+                            crate::metrics::COLLECTS_TOTAL.with_label_values(&["ok"]).inc();
+                            crate::metrics::REDEEMED_GRT
+                                .with_label_values(&[&rav.collection_id])
+                                .set(crate::metrics::grt(value));
                             mark_rav_redeemed(&pool, &rav.collection_id).await?;
                             tracing::info!(
                                 collection_id = %rav.collection_id,
@@ -175,8 +179,14 @@ pub fn spawn(
                                 consumer_credit.write().unwrap().remove(&payer);
                             }
                         }
-                        Ok(Err(e)) => tracing::error!(collection_id = %rav.collection_id, "collect() failed: {e:#}"),
-                        Err(_) => tracing::error!(collection_id = %rav.collection_id, "collect() timed out"),
+                        Ok(Err(e)) => {
+                            crate::metrics::COLLECTS_TOTAL.with_label_values(&["failed"]).inc();
+                            tracing::error!(collection_id = %rav.collection_id, "collect() failed: {e:#}")
+                        }
+                        Err(_) => {
+                            crate::metrics::COLLECTS_TOTAL.with_label_values(&["timeout"]).inc();
+                            tracing::error!(collection_id = %rav.collection_id, "collect() timed out")
+                        }
                     }
                 }
 

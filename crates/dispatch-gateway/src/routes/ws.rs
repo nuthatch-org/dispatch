@@ -13,17 +13,20 @@ use axum::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         ConnectInfo, Path, State,
     },
-    response::IntoResponse,
+    http::HeaderMap,
+    response::{IntoResponse, Response},
     routing::get,
     Router,
 };
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message as TungMsg;
 
-use crate::{selector, server::AppState};
+use crate::{error::GatewayError, selector, server::AppState};
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/ws/:chain_id", get(ws_handler))
+    Router::new()
+        .route("/ws/:chain_id", get(ws_handler))
+        .route("/ws/:chain_id/:key", get(ws_handler_with_key))
 }
 
 async fn ws_handler(
@@ -31,8 +34,25 @@ async fn ws_handler(
     State(state): State<AppState>,
     Path(chain_id): Path<u64>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
-) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| proxy(socket, state, chain_id, addr))
+    headers: HeaderMap,
+) -> Result<Response, GatewayError> {
+    state.api_keys.authenticate(None, &headers)?;
+    Ok(ws
+        .on_upgrade(move |socket| proxy(socket, state, chain_id, addr))
+        .into_response())
+}
+
+async fn ws_handler_with_key(
+    ws: WebSocketUpgrade,
+    State(state): State<AppState>,
+    Path((chain_id, key)): Path<(u64, String)>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Result<Response, GatewayError> {
+    state.api_keys.authenticate(Some(&key), &headers)?;
+    Ok(ws
+        .on_upgrade(move |socket| proxy(socket, state, chain_id, addr))
+        .into_response())
 }
 
 async fn proxy(client: WebSocket, state: AppState, chain_id: u64, peer: SocketAddr) {
@@ -72,7 +92,16 @@ async fn proxy(client: WebSocket, state: AppState, chain_id: u64, peer: SocketAd
         chain_id
     );
 
-    let (upstream, _) = match tokio_tungstenite::connect_async(&upstream_url).await {
+    // One receipt pays for the connection; the provider refuses the upgrade without it.
+    let request = match connection_request(&state, &upstream_url, provider.address) {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, provider = %provider.endpoint, "ws: could not sign receipt");
+            return;
+        }
+    };
+
+    let (upstream, _) = match tokio_tungstenite::connect_async(request).await {
         Ok(v) => v,
         Err(e) => {
             tracing::warn!(error = %e, provider = %provider.endpoint, "ws: upstream connect failed");
@@ -138,4 +167,31 @@ fn tung_to_axum(msg: TungMsg) -> Option<Message> {
         TungMsg::Close(_) => None,
         TungMsg::Frame(_) => None,
     }
+}
+
+/// Price of one WebSocket connection, in CU.
+const CONNECTION_CU: u128 = 10;
+
+fn connection_request(
+    state: &AppState,
+    url: &str,
+    provider: alloy_primitives::Address,
+) -> anyhow::Result<tokio_tungstenite::tungstenite::handshake::client::Request> {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+    let mut metadata = state.config.tap.gateway_payer_address.to_vec();
+    metadata.extend_from_slice(b"eth_subscribe");
+    let receipt = dispatch_tap::create_receipt(
+        &state.signing_key,
+        state.tap_domain_separator,
+        state.config.tap.data_service_address,
+        provider,
+        CONNECTION_CU * state.config.tap.base_price_per_cu,
+        metadata.into(),
+    )?;
+    let mut request = url.into_client_request()?;
+    request
+        .headers_mut()
+        .insert("TAP-Receipt", serde_json::to_string(&receipt)?.parse()?);
+    Ok(request)
 }

@@ -7,8 +7,9 @@ use std::{
     collections::HashMap,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc,
+        Arc, Mutex,
     },
+    time::Instant,
 };
 
 use alloy_primitives::Address;
@@ -28,7 +29,17 @@ pub struct Provider {
     /// Per-chain capability map used for tier-aware routing.
     /// Key = chain ID; value = tiers this provider supports on that chain.
     pub chain_capabilities: HashMap<u64, Vec<CapabilityTier>>,
-    pub qos: ProviderQos,
+    /// Shared with the provider's entry in the next registry, so history survives discovery.
+    pub qos: Arc<ProviderQos>,
+    pub probes: Arc<Mutex<HashMap<u64, ProbeRecord>>>,
+}
+
+/// The latest synthetic probe of one provider on one chain.
+#[derive(Debug, Default, Clone)]
+pub struct ProbeRecord {
+    pub last_ok: Option<Instant>,
+    pub block: Option<u64>,
+    pub consecutive_failures: u32,
 }
 
 impl Provider {
@@ -49,7 +60,8 @@ impl Provider {
             chains: cfg.chains.clone(),
             region: cfg.region.clone(),
             chain_capabilities,
-            qos: ProviderQos::default(),
+            qos: Arc::default(),
+            probes: Arc::default(),
         }
     }
 }
@@ -83,9 +95,28 @@ pub struct Registry {
 
 impl Registry {
     pub fn from_config(providers: &[ProviderConfig]) -> Self {
+        Self::build(providers, None)
+    }
+
+    /// A registry for a fresh provider list that keeps the QoS, probe history and chain heads
+    /// already learned for providers and chains it still contains.
+    pub fn refreshed(&self, providers: &[ProviderConfig]) -> Self {
+        Self::build(providers, Some(self))
+    }
+
+    fn build(providers: &[ProviderConfig], previous: Option<&Registry>) -> Self {
         let all: Vec<Arc<Provider>> = providers
             .iter()
-            .map(|c| Arc::new(Provider::from_config(c)))
+            .map(|c| {
+                let mut p = Provider::from_config(c);
+                if let Some(old) =
+                    previous.and_then(|r| r.all.iter().find(|o| o.address == c.address))
+                {
+                    p.qos = old.qos.clone();
+                    p.probes = old.probes.clone();
+                }
+                Arc::new(p)
+            })
             .collect();
 
         let mut by_chain: HashMap<u64, Vec<Arc<Provider>>> = HashMap::new();
@@ -94,9 +125,11 @@ impl Registry {
         for provider in &all {
             for &chain_id in &provider.chains {
                 by_chain.entry(chain_id).or_default().push(provider.clone());
-                chain_state
-                    .entry(chain_id)
-                    .or_insert_with(|| Arc::new(ChainState::default()));
+                chain_state.entry(chain_id).or_insert_with(|| {
+                    previous
+                        .and_then(|r| r.chain_state.get(&chain_id).cloned())
+                        .unwrap_or_default()
+                });
             }
         }
 
@@ -126,5 +159,31 @@ impl Registry {
 
     pub fn chain_state(&self, chain_id: u64) -> Option<Arc<ChainState>> {
         self.chain_state.get(&chain_id).cloned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg(byte: u8, chains: Vec<u64>) -> ProviderConfig {
+        toml::from_str(&format!(
+            "address = \"{:?}\"\nendpoint = \"http://p{byte}\"\nchains = {chains:?}",
+            alloy_primitives::Address::repeat_byte(byte)
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn refresh_keeps_history_for_providers_and_chains_that_remain() {
+        let old = Registry::from_config(&[cfg(1, vec![1]), cfg(2, vec![1])]);
+        old.all[0].qos.record_failure();
+        old.chain_state(1).unwrap().update_head(500);
+
+        let new = old.refreshed(&[cfg(1, vec![1, 10]), cfg(3, vec![1])]);
+        assert!(Arc::ptr_eq(&new.all[0].qos, &old.all[0].qos));
+        assert!(!Arc::ptr_eq(&new.all[1].qos, &old.all[1].qos));
+        assert_eq!(new.providers_for_chain(1).unwrap().1, 500);
+        assert_eq!(new.providers_for_chain(10).unwrap().1, 0);
     }
 }

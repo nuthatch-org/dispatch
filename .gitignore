@@ -2,7 +2,6 @@
 config.toml
 docker/config.toml
 docker/gateway.toml
-docker/oracle.toml
 agent.config.json
 *.key
 *.env
@@ -20,3 +19,5 @@ subgraph/build/
 contracts/broadcast/
 .env.local
 apps/dispatch-live/.vercel
+
+rav-ledger.json

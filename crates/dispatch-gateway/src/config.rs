@@ -52,8 +52,34 @@ pub struct Config {
     pub service: Option<ServiceConfig>,
     /// Optional auto-provisioning: fund escrow for new providers automatically.
     pub provisioning: Option<ProvisioningConfig>,
+    /// Read-only Arbitrum One access, for operator lookups and the RAV floor.
+    pub chain: Option<ChainConfig>,
     /// Optional Seahorn (Solana structured data) proxy configuration.
     pub seahorn: Option<SeahornConfig>,
+    /// API keys. Without this section the gateway serves anyone.
+    pub auth: Option<crate::auth::AuthConfig>,
+    /// USD price list. Without it, receipts are priced in GRT by `tap.base_price_per_cu`.
+    pub pricing: Option<crate::pricing::PricingConfig>,
+}
+
+/// Read-only chain access. Kept apart from `[provisioning]`, which also needs a payer key that a
+/// gateway reading the chain has no business holding.
+#[derive(Debug, Deserialize, Clone)]
+pub struct ChainConfig {
+    pub arbitrum_rpc_url: String,
+}
+
+impl Config {
+    /// `[chain]`, else the provisioner's RPC, else none.
+    pub fn arbitrum_rpc_url(&self) -> Option<&str> {
+        self.chain
+            .as_ref()
+            .map(|c| c.arbitrum_rpc_url.as_str())
+            .or(self
+                .provisioning
+                .as_ref()
+                .map(|p| p.arbitrum_rpc_url.as_str()))
+    }
 }
 
 /// Connection details for the local dispatch-service instance.
@@ -101,6 +127,13 @@ pub struct TapConfig {
     /// GraphTallyCollector contract address.
     #[serde(default = "default_tap_verifying_contract")]
     pub eip712_verifying_contract: Address,
+    /// Where the last signed RAV per collection is kept. Put it on a volume: if it is lost, the
+    /// next RAV for each collection starts from on-chain `tokensCollected`.
+    #[serde(default = "default_rav_ledger_path")]
+    pub rav_ledger_path: String,
+    /// HorizonStaking, asked whether an attestation signer is an operator of its provider.
+    #[serde(default = "default_horizon_staking")]
+    pub horizon_staking_address: Address,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -117,6 +150,18 @@ pub struct QosConfig {
     /// Score bonus added for providers in the same region as this gateway.
     #[serde(default = "default_region_bonus")]
     pub region_bonus: f64,
+    /// Treat a response without an attestation bound to its provider as a provider failure.
+    #[serde(default)]
+    pub require_attestation: bool,
+    /// Share of deterministic calls on settled blocks that a second provider is also asked.
+    #[serde(default = "default_cross_check_rate")]
+    pub cross_check_rate: f64,
+    /// How long a provider caught disagreeing has every deterministic call sent to quorum.
+    #[serde(default = "default_suspect_secs")]
+    pub suspect_secs: u64,
+    /// The old behaviour: every deterministic call to `quorum_k` providers, all of them paid.
+    #[serde(default)]
+    pub quorum_always: bool,
 }
 
 /// Static provider configuration.
@@ -242,6 +287,14 @@ fn default_port() -> u16 {
 fn default_base_price_per_cu() -> u128 {
     4_000_000_000_000
 } // 4e-6 GRT/CU; see pricing_math test
+fn default_rav_ledger_path() -> String {
+    "rav-ledger.json".to_string()
+}
+fn default_horizon_staking() -> Address {
+    "0x00669A4CF01450B64E8A2A20E9b1FCB71E61eF03"
+        .parse()
+        .unwrap()
+}
 fn default_tap_chain_id() -> u64 {
     42161
 }
@@ -255,6 +308,12 @@ fn default_probe_interval_secs() -> u64 {
 }
 fn default_concurrent_k() -> usize {
     3
+}
+fn default_cross_check_rate() -> f64 {
+    0.02
+}
+fn default_suspect_secs() -> u64 {
+    600
 }
 fn default_quorum_k() -> usize {
     3
@@ -335,5 +394,32 @@ mod tests {
             (eth_get_logs_usd_per_m - 21.60).abs() < 0.01,
             "eth_getLogs: ${eth_get_logs_usd_per_m:.2}/M"
         );
+    }
+
+    #[test]
+    fn chain_rpc_does_not_need_provisioning() {
+        let base = r#"
+            [gateway]
+            host = "127.0.0.1"
+            port = 0
+            [tap]
+            signer_private_key = "0x01"
+            gateway_payer_address = "0x0000000000000000000000000000000000000000"
+            data_service_address = "0x7101d5c1a5c89c3647f5118da118e56c023ba0b9"
+            eip712_domain_name = "GraphTallyCollector"
+            [qos]
+        "#;
+        let none: Config = toml::from_str(base).unwrap();
+        assert_eq!(none.arbitrum_rpc_url(), None);
+
+        let with_chain: Config = toml::from_str(&format!(
+            "{base}\n[chain]\narbitrum_rpc_url = \"https://arb1.arbitrum.io/rpc\""
+        ))
+        .unwrap();
+        assert_eq!(
+            with_chain.arbitrum_rpc_url(),
+            Some("https://arb1.arbitrum.io/rpc")
+        );
+        assert!(with_chain.provisioning.is_none());
     }
 }

@@ -19,6 +19,39 @@ lazy_static! {
         vec![0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0]
     )
     .unwrap();
+    pub static ref ATTESTATIONS_TOTAL: CounterVec = register_counter_vec!(
+        "dispatch_gateway_attestations_total",
+        "Provider responses by attestation outcome: bound, unbound or missing",
+        &["provider", "outcome"]
+    )
+    .unwrap();
+    pub static ref KEY_REQUESTS_TOTAL: CounterVec = register_counter_vec!(
+        "dispatch_gateway_key_requests_total",
+        "Requests served per API key",
+        &["key", "chain_id"]
+    )
+    .unwrap();
+    pub static ref KEY_CU_TOTAL: CounterVec = register_counter_vec!(
+        "dispatch_gateway_key_cu_total",
+        "Compute units charged per API key",
+        &["key", "chain_id"]
+    )
+    .unwrap();
+    pub static ref CROSS_CHECKS_TOTAL: CounterVec = register_counter_vec!(
+        "dispatch_gateway_cross_checks_total",
+        "Sampled second opinions by outcome: agree, disagree, inconclusive or failed",
+        &["chain_id", "outcome"]
+    )
+    .unwrap();
+}
+
+/// Meter one served request against the caller.
+pub fn record_usage(key: &str, chain_id: u64, cu: u32) {
+    let chain = chain_id.to_string();
+    KEY_REQUESTS_TOTAL.with_label_values(&[key, &chain]).inc();
+    KEY_CU_TOTAL
+        .with_label_values(&[key, &chain])
+        .inc_by(cu as f64);
 }
 
 /// Increment the request counter and observe the duration.

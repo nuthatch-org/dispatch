@@ -1,11 +1,16 @@
 pub mod affinity;
+pub mod attestation;
+pub mod auth;
 pub mod config;
+pub mod crosscheck;
 pub mod discovery;
 pub mod error;
 pub mod metrics;
+pub mod pricing;
 pub mod probe;
 pub mod provisioner;
 pub mod qos;
+pub mod rav_ledger;
 pub mod registry;
 pub mod routes;
 pub mod selector;

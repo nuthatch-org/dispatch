@@ -9,7 +9,7 @@ use std::sync::Arc;
 use serde::Deserialize;
 use tokio::time::{interval, Duration, MissedTickBehavior};
 
-use crate::{config::ProviderConfig, registry::Registry, server::AppState};
+use crate::{config::ProviderConfig, server::AppState};
 
 // ---------------------------------------------------------------------------
 // Subgraph response types
@@ -122,7 +122,7 @@ pub async fn run(state: AppState) {
                         }
                     }
                 }
-                let new_registry = Registry::from_config(&providers);
+                let new_registry = state.registry.load().refreshed(&providers);
                 state.registry.store(Arc::new(new_registry));
                 tracing::info!(
                     count = providers.len(),
