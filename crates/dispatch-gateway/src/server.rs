@@ -81,12 +81,9 @@ pub async fn run(config: Config) -> Result<()> {
             config.tap.rav_ledger_path.clone().into(),
         ))?),
         attestor: Arc::new(Attestor::new(
-            config.provisioning.as_ref().map(|p| {
-                (
-                    p.arbitrum_rpc_url.clone(),
-                    config.tap.horizon_staking_address,
-                )
-            }),
+            config
+                .arbitrum_rpc_url()
+                .map(|url| (url.to_string(), config.tap.horizon_staking_address)),
             config.tap.data_service_address,
         )),
     };

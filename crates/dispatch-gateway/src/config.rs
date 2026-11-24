@@ -52,8 +52,30 @@ pub struct Config {
     pub service: Option<ServiceConfig>,
     /// Optional auto-provisioning: fund escrow for new providers automatically.
     pub provisioning: Option<ProvisioningConfig>,
+    /// Read-only Arbitrum One access, for operator lookups and the RAV floor.
+    pub chain: Option<ChainConfig>,
     /// Optional Seahorn (Solana structured data) proxy configuration.
     pub seahorn: Option<SeahornConfig>,
+}
+
+/// Read-only chain access. Kept apart from `[provisioning]`, which also needs a payer key that a
+/// gateway reading the chain has no business holding.
+#[derive(Debug, Deserialize, Clone)]
+pub struct ChainConfig {
+    pub arbitrum_rpc_url: String,
+}
+
+impl Config {
+    /// `[chain]`, else the provisioner's RPC, else none.
+    pub fn arbitrum_rpc_url(&self) -> Option<&str> {
+        self.chain
+            .as_ref()
+            .map(|c| c.arbitrum_rpc_url.as_str())
+            .or(self
+                .provisioning
+                .as_ref()
+                .map(|p| p.arbitrum_rpc_url.as_str()))
+    }
 }
 
 /// Connection details for the local dispatch-service instance.
@@ -353,5 +375,32 @@ mod tests {
             (eth_get_logs_usd_per_m - 21.60).abs() < 0.01,
             "eth_getLogs: ${eth_get_logs_usd_per_m:.2}/M"
         );
+    }
+
+    #[test]
+    fn chain_rpc_does_not_need_provisioning() {
+        let base = r#"
+            [gateway]
+            host = "127.0.0.1"
+            port = 0
+            [tap]
+            signer_private_key = "0x01"
+            gateway_payer_address = "0x0000000000000000000000000000000000000000"
+            data_service_address = "0x7101d5c1a5c89c3647f5118da118e56c023ba0b9"
+            eip712_domain_name = "GraphTallyCollector"
+            [qos]
+        "#;
+        let none: Config = toml::from_str(base).unwrap();
+        assert_eq!(none.arbitrum_rpc_url(), None);
+
+        let with_chain: Config = toml::from_str(&format!(
+            "{base}\n[chain]\narbitrum_rpc_url = \"https://arb1.arbitrum.io/rpc\""
+        ))
+        .unwrap();
+        assert_eq!(
+            with_chain.arbitrum_rpc_url(),
+            Some("https://arb1.arbitrum.io/rpc")
+        );
+        assert!(with_chain.provisioning.is_none());
     }
 }

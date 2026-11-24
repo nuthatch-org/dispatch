@@ -169,7 +169,7 @@ sol! {
 }
 
 /// What GraphTallyCollector has already paid out for this collection, or zero when the gateway has
-/// no chain access configured.
+/// no chain access configured (`[chain]` or `[provisioning]`).
 async fn on_chain_floor(
     state: &AppState,
     data_service: Address,
@@ -177,9 +177,10 @@ async fn on_chain_floor(
     receiver: Address,
     payer: Address,
 ) -> Result<u128, GatewayError> {
-    let Some(p) = &state.config.provisioning else {
+    let Some(rpc_url) = state.config.arbitrum_rpc_url() else {
         return Ok(0);
     };
+    let collector = state.config.tap.eip712_verifying_contract;
     let data = tokensCollectedCall {
         dataService: data_service,
         collectionId: cid,
@@ -192,13 +193,13 @@ async fn on_chain_floor(
         "id": 1,
         "method": "eth_call",
         "params": [
-            { "to": format!("{:#x}", p.collector_address), "data": format!("0x{}", hex::encode(data)) },
+            { "to": format!("{collector:#x}"), "data": format!("0x{}", hex::encode(data)) },
             "latest"
         ]
     });
     let resp: serde_json::Value = state
         .http_client
-        .post(&p.arbitrum_rpc_url)
+        .post(rpc_url)
         .json(&body)
         .send()
         .await
@@ -260,6 +261,7 @@ mod tests {
             rate_limiter: None,
             filter_affinity: Arc::new(FilterAffinity::new(std::time::Duration::from_secs(1), 1)),
             rav_ledger: Arc::new(RavLedger::load(None).unwrap()),
+            attestor: Arc::new(crate::attestation::Attestor::new(None, Address::ZERO)),
             config: Arc::new(config),
         }
     }

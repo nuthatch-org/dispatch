@@ -33,6 +33,14 @@ rav_ledger_path = "/var/lib/dispatch/rav-ledger.json"
 # Break-even vs Alchemy on eth_call at ~$0.10/GRT. See config.rs pricing_math test for derivation.
 # base_price_per_cu = 4000000000000
 
+# ── Chain reads ───────────────────────────────────────────────────────────
+# Read-only Arbitrum One access: checks that a provider's attestation signer is one of its
+# operators, and seeds the RAV floor after the ledger file is lost. Needs no key. Without it
+# (and without [provisioning]) only a provider signing with its own address is trusted.
+#
+# [chain]
+# arbitrum_rpc_url = "https://arb1.arbitrum.io/rpc"
+
 [qos]
 probe_interval_secs = 10
 # How many providers to dispatch to concurrently (first response wins).
