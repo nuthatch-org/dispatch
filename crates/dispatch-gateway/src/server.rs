@@ -68,8 +68,10 @@ pub async fn run(config: Config) -> Result<()> {
 
     let state = AppState {
         config: Arc::new(config.clone()),
+        // CoinGecko refuses requests without a User-Agent, which silently pinned the GRT price.
         http_client: reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(15))
+            .user_agent(concat!("dispatch-gateway/", env!("CARGO_PKG_VERSION")))
             .build()?,
         registry,
         signing_key: Arc::new(signing_key),
