@@ -13,6 +13,17 @@ pub fn router() -> Router<AppState> {
         .route("/version", get(version))
         .route("/chains", get(chains))
         .route("/block/:chain_id", get(block_number))
+        .route("/metrics", get(metrics))
+}
+
+async fn metrics() -> ([(axum::http::HeaderName, &'static str); 1], Vec<u8>) {
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4",
+        )],
+        crate::metrics::render(),
+    )
 }
 
 async fn health() -> Json<Value> {

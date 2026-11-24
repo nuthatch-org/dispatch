@@ -266,6 +266,12 @@ INFO dispatch_service::server: dispatch-service starting addr=0.0.0.0:7700
 
 ---
 
+## Monitoring
+
+`GET /metrics` on the service is Prometheus text. What it served (`dispatch_service_requests_total`, `dispatch_service_request_duration_seconds`), what it was paid (`dispatch_service_receipt_grt_total`, and `dispatch_service_redeemed_grt` per collection once collected on-chain), what it refused and why (`dispatch_service_rejections_total{reason}`), and whether aggregation and `collect()` are working (`dispatch_service_ravs_total`, `dispatch_service_collects_total`). Import `docker/grafana/dispatch-provider.json` into Grafana for a dashboard over all of it.
+
+The two worth an alert: `collects_total{outcome!="ok"}` rising, because receipts you are not collecting are unpaid work, and `ravs_total{outcome="failed"}`, because without RAVs there is nothing to collect.
+
 ## 5. Register on-chain
 
 Once the service is running, register your provider in `RPCDataService` and activate each chain you want to serve. The **indexer agent** handles this automatically.
