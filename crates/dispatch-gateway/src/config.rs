@@ -200,11 +200,26 @@ pub struct ProviderConfig {
 /// Dynamic provider discovery via The Graph subgraph.
 #[derive(Debug, Deserialize, Clone)]
 pub struct DiscoveryConfig {
-    /// GraphQL endpoint of the RPC network subgraph.
+    /// Where providers are read from. `chain` reads `RPCDataService` events through
+    /// `[chain] arbitrum_rpc_url` and needs no subgraph.
+    #[serde(default)]
+    pub source: DiscoverySource,
+    /// GraphQL endpoint of the RPC network subgraph, for `source = "subgraph"`.
+    #[serde(default)]
     pub subgraph_url: String,
+    /// First block to scan for `source = "chain"`; defaults to the contract's deployment.
+    pub start_block: Option<u64>,
     /// How often to poll the subgraph for provider updates (seconds).
     #[serde(default = "default_discovery_interval_secs")]
     pub interval_secs: u64,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum DiscoverySource {
+    #[default]
+    Subgraph,
+    Chain,
 }
 
 /// Per-IP rate limiting for the RPC endpoint.

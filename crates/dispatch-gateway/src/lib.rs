@@ -1,6 +1,7 @@
 pub mod affinity;
 pub mod attestation;
 pub mod auth;
+pub mod chain_discovery;
 pub mod config;
 pub mod crosscheck;
 pub mod discovery;

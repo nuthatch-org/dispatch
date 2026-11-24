@@ -91,8 +91,11 @@ concurrent_k        = 3
 # initial set until the first successful poll.
 #
 [discovery]
-subgraph_url  = "https://api.studio.thegraph.com/query/1747796/rpc-network/v0.2.0"
+# "chain" reads RPCDataService events through [chain] arbitrum_rpc_url, no subgraph needed.
+source        = "chain"
 interval_secs = 60
+# For source = "subgraph":
+# subgraph_url = "https://api.studio.thegraph.com/query/1747796/rpc-network/<version>"
 
 # ── Receipt feed API ──────────────────────────────────────────────────────
 # When configured, the gateway proxies GET /receipts/recent and GET /receipts

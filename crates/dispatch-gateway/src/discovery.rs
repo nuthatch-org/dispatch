@@ -1,4 +1,4 @@
-//! Dynamic provider discovery via The Graph subgraph.
+//! Dynamic provider discovery, from the RPC network subgraph or straight from the contract.
 //!
 //! Polls the RPC network subgraph at a configurable interval and rebuilds the
 //! provider registry from the response. Providers that disappear from the
@@ -9,7 +9,11 @@ use std::sync::Arc;
 use serde::Deserialize;
 use tokio::time::{interval, Duration, MissedTickBehavior};
 
-use crate::{config::ProviderConfig, server::AppState};
+use crate::{
+    chain_discovery::ChainScanner,
+    config::{DiscoverySource, ProviderConfig},
+    server::AppState,
+};
 
 // ---------------------------------------------------------------------------
 // Subgraph response types
@@ -56,7 +60,24 @@ pub async fn run(state: AppState) {
     let mut tick = interval(Duration::from_secs(cfg.interval_secs));
     tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
+    let mut scanner = match cfg.source {
+        DiscoverySource::Subgraph => None,
+        DiscoverySource::Chain => match state.config.arbitrum_rpc_url() {
+            Some(url) => Some(ChainScanner::new(
+                url.to_string(),
+                state.config.tap.data_service_address,
+                cfg.start_block
+                    .unwrap_or(crate::chain_discovery::DEFAULT_START_BLOCK),
+            )),
+            None => {
+                tracing::error!("discovery source is chain but no [chain] arbitrum_rpc_url is set");
+                return;
+            }
+        },
+    };
+
     tracing::info!(
+        source = ?cfg.source,
         subgraph_url = %cfg.subgraph_url,
         interval_secs = cfg.interval_secs,
         "discovery task started"
@@ -65,7 +86,11 @@ pub async fn run(state: AppState) {
     loop {
         tick.tick().await;
 
-        match fetch_providers(&state.http_client, &cfg.subgraph_url).await {
+        let fetched = match scanner.as_mut() {
+            Some(s) => s.poll(&state.http_client).await,
+            None => fetch_providers(&state.http_client, &cfg.subgraph_url).await,
+        };
+        match fetched {
             Ok(mut providers) if !providers.is_empty() => {
                 // If a static provider entry exists for the same address:
                 //  - Override the endpoint (Docker internal hostname instead of public URL).
