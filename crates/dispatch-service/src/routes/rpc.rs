@@ -35,6 +35,96 @@ async fn rpc_handler(
         .ok_or(ServiceError::UnsupportedChain(chain_id))?
         .clone();
 
+    let validated = admit(&state, &headers).await?;
+
+    match body {
+        Value::Array(items) => {
+            let requests = parse_batch(items)?;
+            tracing::debug!(count = requests.len(), chain_id, "dispatching batch");
+
+            let responses =
+                proxy::forward_batch(&state.http_client, &backend_url, &requests).await?;
+
+            settle(&state, chain_id, &validated).await;
+
+            Ok(Json(responses).into_response())
+        }
+
+        Value::Object(_) => {
+            let request: JsonRpcRequest = serde_json::from_value(body)
+                .map_err(|e| ServiceError::InvalidRequest(e.to_string()))?;
+            request.validate()?;
+            tracing::debug!(method = %request.method, chain_id, "dispatching");
+
+            // --- Forward to backend Ethereum client ---
+            let response = proxy::forward(&state.http_client, &backend_url, &request).await?;
+
+            settle(&state, chain_id, &validated).await;
+
+            // --- Sign the response ---
+            let params_json =
+                serde_json::to_string(&request.params).unwrap_or_else(|_| "null".to_string());
+            let result_json = match (&response.result, &response.error) {
+                (Some(r), _) => serde_json::to_string(r).unwrap_or_else(|_| "null".to_string()),
+                (_, Some(e)) => serde_json::to_string(e).unwrap_or_else(|_| "null".to_string()),
+                _ => "null".to_string(),
+            };
+
+            let mut resp = Json(response).into_response();
+
+            match attestation::sign(
+                &state.signing_key,
+                state.signer_address,
+                chain_id,
+                &request.method,
+                &params_json,
+                &result_json,
+            ) {
+                Ok(att) => {
+                    if let Ok(header_val) = serde_json::to_string(&att)
+                        .map_err(|e| e.to_string())
+                        .and_then(|s| {
+                            s.parse()
+                                .map_err(|e: axum::http::header::InvalidHeaderValue| e.to_string())
+                        })
+                    {
+                        resp.headers_mut().insert("x-drpc-attestation", header_val);
+                    }
+                }
+                Err(e) => tracing::warn!(error = %e, "failed to sign response"),
+            }
+
+            Ok(resp)
+        }
+
+        _ => Err(ServiceError::InvalidRequest(
+            "expected JSON object or array".to_string(),
+        )),
+    }
+}
+
+/// Parse and validate a JSON-RPC batch. Returns an error if the batch is empty
+/// or any item fails to deserialise or validate.
+fn parse_batch(items: Vec<Value>) -> Result<Vec<JsonRpcRequest>, ServiceError> {
+    if items.is_empty() {
+        return Err(ServiceError::InvalidRequest("empty batch".to_string()));
+    }
+    items
+        .into_iter()
+        .map(|v| {
+            let req: JsonRpcRequest = serde_json::from_value(v)
+                .map_err(|e| ServiceError::InvalidRequest(e.to_string()))?;
+            req.validate()?;
+            Ok(req)
+        })
+        .collect()
+}
+
+/// Check the TAP receipt, the payer's escrow and its credit before serving anything.
+pub(crate) async fn admit(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<tap::ValidatedReceipt, ServiceError> {
     // --- TAP receipt validation (shared by single and batch) ---
     let receipt_header = headers
         .get("TAP-Receipt")
@@ -100,119 +190,26 @@ async fn rpc_handler(
         }
     }
 
-    match body {
-        Value::Array(items) => {
-            let requests = parse_batch(items)?;
-            tracing::debug!(count = requests.len(), chain_id, "dispatching batch");
-
-            let responses =
-                proxy::forward_batch(&state.http_client, &backend_url, &requests).await?;
-
-            // --- Increment consumer credit ---
-            {
-                let mut credit = state.consumer_credit.write().unwrap();
-                *credit.entry(validated.payer).or_insert(0) += validated.receipt.value;
-            }
-
-            // --- Persist receipt (non-fatal if DB is unavailable) ---
-            if let Some(pool) = &state.db_pool {
-                if let Err(e) = db::receipts::insert(pool, chain_id, &validated).await {
-                    tracing::warn!(
-                        error = %e,
-                        signer = %validated.signer,
-                        chain_id,
-                        "failed to persist TAP receipt (batch)"
-                    );
-                }
-            }
-
-            Ok(Json(responses).into_response())
-        }
-
-        Value::Object(_) => {
-            let request: JsonRpcRequest = serde_json::from_value(body)
-                .map_err(|e| ServiceError::InvalidRequest(e.to_string()))?;
-            request.validate()?;
-            tracing::debug!(method = %request.method, chain_id, "dispatching");
-
-            // --- Forward to backend Ethereum client ---
-            let response = proxy::forward(&state.http_client, &backend_url, &request).await?;
-
-            // --- Increment consumer credit ---
-            {
-                let mut credit = state.consumer_credit.write().unwrap();
-                *credit.entry(validated.payer).or_insert(0) += validated.receipt.value;
-            }
-
-            // --- Persist receipt (non-fatal if DB is unavailable) ---
-            if let Some(pool) = &state.db_pool {
-                if let Err(e) = db::receipts::insert(pool, chain_id, &validated).await {
-                    tracing::warn!(
-                        error = %e,
-                        signer = %validated.signer,
-                        chain_id,
-                        "failed to persist TAP receipt"
-                    );
-                }
-            }
-
-            // --- Sign the response ---
-            let params_json =
-                serde_json::to_string(&request.params).unwrap_or_else(|_| "null".to_string());
-            let result_json = match (&response.result, &response.error) {
-                (Some(r), _) => serde_json::to_string(r).unwrap_or_else(|_| "null".to_string()),
-                (_, Some(e)) => serde_json::to_string(e).unwrap_or_else(|_| "null".to_string()),
-                _ => "null".to_string(),
-            };
-
-            let mut resp = Json(response).into_response();
-
-            match attestation::sign(
-                &state.signing_key,
-                state.signer_address,
-                chain_id,
-                &request.method,
-                &params_json,
-                &result_json,
-            ) {
-                Ok(att) => {
-                    if let Ok(header_val) = serde_json::to_string(&att)
-                        .map_err(|e| e.to_string())
-                        .and_then(|s| {
-                            s.parse()
-                                .map_err(|e: axum::http::header::InvalidHeaderValue| e.to_string())
-                        })
-                    {
-                        resp.headers_mut().insert("x-drpc-attestation", header_val);
-                    }
-                }
-                Err(e) => tracing::warn!(error = %e, "failed to sign response"),
-            }
-
-            Ok(resp)
-        }
-
-        _ => Err(ServiceError::InvalidRequest(
-            "expected JSON object or array".to_string(),
-        )),
-    }
+    Ok(validated)
 }
 
-/// Parse and validate a JSON-RPC batch. Returns an error if the batch is empty
-/// or any item fails to deserialise or validate.
-fn parse_batch(items: Vec<Value>) -> Result<Vec<JsonRpcRequest>, ServiceError> {
-    if items.is_empty() {
-        return Err(ServiceError::InvalidRequest("empty batch".to_string()));
+/// Count a served receipt against the payer's credit and keep it for aggregation.
+pub(crate) async fn settle(state: &AppState, chain_id: u64, validated: &tap::ValidatedReceipt) {
+    {
+        let mut credit = state.consumer_credit.write().unwrap();
+        *credit.entry(validated.payer).or_insert(0) += validated.receipt.value;
     }
-    items
-        .into_iter()
-        .map(|v| {
-            let req: JsonRpcRequest = serde_json::from_value(v)
-                .map_err(|e| ServiceError::InvalidRequest(e.to_string()))?;
-            req.validate()?;
-            Ok(req)
-        })
-        .collect()
+    // Non-fatal if the DB is unavailable.
+    if let Some(pool) = &state.db_pool {
+        if let Err(e) = db::receipts::insert(pool, chain_id, validated).await {
+            tracing::warn!(
+                error = %e,
+                signer = %validated.signer,
+                chain_id,
+                "failed to persist TAP receipt"
+            );
+        }
+    }
 }
 
 #[cfg(test)]
