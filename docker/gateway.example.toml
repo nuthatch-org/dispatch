@@ -62,9 +62,9 @@ rav_ledger_path = "/var/lib/dispatch/rav-ledger.json"
 #   trace_usd_per_million    = 8.0
 #
 # [pricing]
-# standard_usd_per_million = 1.0
-# archive_usd_per_million  = 3.0
-# trace_usd_per_million    = 4.0     # debug_*, trace_*, eth_getLogs
+# standard_usd_per_million = 6.0
+# archive_usd_per_million  = 7.0
+# trace_usd_per_million    = 8.0     # debug_*, trace_*, eth_getLogs
 # grt_usd                  = 0.08    # used until the feed answers
 #
 # [pricing.grt_usd_feed]
