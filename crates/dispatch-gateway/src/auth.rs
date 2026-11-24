@@ -26,11 +26,40 @@ pub struct KeyConfig {
     pub key_hash: B256,
     /// Per-key request budget; unlimited when absent.
     pub requests_per_second: Option<u32>,
+    /// Requests per UTC day. Every request is paid from the gateway's escrow, so this bounds what
+    /// one key can spend. Counted in memory: a restart starts the day's count again.
+    pub requests_per_day: Option<u64>,
 }
 
 pub struct KeyEntry {
     pub name: String,
     limiter: Option<DefaultDirectRateLimiter>,
+    per_day: Option<u64>,
+    /// (UTC day number, requests counted on it).
+    today: std::sync::Mutex<(u64, u64)>,
+}
+
+fn utc_day() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() / 86_400)
+}
+
+impl KeyEntry {
+    fn charge_day(&self, n: u64, day: u64) -> Result<(), GatewayError> {
+        let Some(cap) = self.per_day else {
+            return Ok(());
+        };
+        let mut today = self.today.lock().unwrap();
+        if today.0 != day {
+            *today = (day, 0);
+        }
+        if today.1 + n > cap {
+            return Err(GatewayError::DailyQuotaExceeded(cap));
+        }
+        today.1 += n;
+        Ok(())
+    }
 }
 
 pub enum Caller {
@@ -52,13 +81,12 @@ impl Caller {
         let Caller::Key(k) = self else {
             return Ok(());
         };
-        let (Some(limiter), Some(n)) = (&k.limiter, NonZeroU32::new(n)) else {
-            return Ok(());
-        };
-        match limiter.check_n(n) {
-            Ok(Ok(())) => Ok(()),
-            _ => Err(GatewayError::RateLimited),
+        if let (Some(limiter), Some(nz)) = (&k.limiter, NonZeroU32::new(n)) {
+            if !matches!(limiter.check_n(nz), Ok(Ok(()))) {
+                return Err(GatewayError::RateLimited);
+            }
         }
+        k.charge_day(n as u64, utc_day())
     }
 }
 
@@ -88,6 +116,8 @@ impl ApiKeys {
                     Arc::new(KeyEntry {
                         name: k.name.clone(),
                         limiter,
+                        per_day: k.requests_per_day,
+                        today: std::sync::Mutex::new((0, 0)),
                     }),
                 )
             })
@@ -141,6 +171,7 @@ mod tests {
                 name: "graphops".into(),
                 key_hash: hash,
                 requests_per_second: rps,
+                requests_per_day: None,
             }],
         };
         (ApiKeys::new(Some(&cfg)), key)
@@ -208,5 +239,26 @@ mod tests {
             .authenticate(Some(&key), &HeaderMap::new())
             .unwrap();
         assert_eq!(caller.label(), "graphops");
+    }
+
+    #[test]
+    fn the_daily_cap_counts_batches_and_resets_on_a_new_day() {
+        let e = KeyEntry {
+            name: "k".into(),
+            limiter: None,
+            per_day: Some(10),
+            today: std::sync::Mutex::new((0, 0)),
+        };
+        assert!(e.charge_day(7, 100).is_ok());
+        assert!(matches!(
+            e.charge_day(4, 100),
+            Err(GatewayError::DailyQuotaExceeded(10))
+        ));
+        assert!(e.charge_day(3, 100).is_ok());
+        assert!(e.charge_day(1, 100).is_err());
+        assert!(
+            e.charge_day(10, 101).is_ok(),
+            "a new UTC day starts the count again"
+        );
     }
 }
