@@ -292,12 +292,14 @@ async fn process_request(
             .ok_or(GatewayError::UnsupportedChain(chain_id))?;
 
         let tier = required_tier(&request.method, &request.params);
+        let window = state.config.answering_window();
         let capable: Vec<_> = providers
             .iter()
             .filter(|p| {
                 p.chain_capabilities
                     .get(&chain_id)
                     .is_some_and(|caps| caps.contains(&tier))
+                    && p.is_routable(chain_id, window)
             })
             .cloned()
             .collect();

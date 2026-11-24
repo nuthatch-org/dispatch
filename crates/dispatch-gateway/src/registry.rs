@@ -44,6 +44,15 @@ pub struct ProbeRecord {
 }
 
 impl Provider {
+    /// Whether traffic may go to this provider on this chain. Never probed counts as yes, so a
+    /// restart does not refuse everything until the first probe; after that it needs a recent answer.
+    pub fn is_routable(&self, chain_id: u64, window: std::time::Duration) -> bool {
+        match self.probes.lock().unwrap().get(&chain_id) {
+            None => true,
+            Some(r) => r.last_ok.is_some_and(|t| t.elapsed() <= window),
+        }
+    }
+
     fn from_config(cfg: &ProviderConfig) -> Self {
         // If dynamic discovery populated per-chain capabilities, use them.
         // Otherwise derive from the global capabilities × declared chains.
@@ -187,5 +196,31 @@ mod tests {
         assert!(!Arc::ptr_eq(&new.all[1].qos, &old.all[1].qos));
         assert_eq!(new.providers_for_chain(1).unwrap().1, 500);
         assert_eq!(new.providers_for_chain(10).unwrap().1, 0);
+    }
+
+    #[test]
+    fn only_providers_that_answered_recently_are_routable() {
+        let r = Registry::from_config(&[cfg(1, vec![10]), cfg(2, vec![10]), cfg(3, vec![10])]);
+        let window = std::time::Duration::from_secs(30);
+        let [fresh, dead, never] = [&r.all[0], &r.all[1], &r.all[2]];
+        fresh.probes.lock().unwrap().insert(
+            10,
+            ProbeRecord {
+                last_ok: Some(Instant::now()),
+                block: Some(1),
+                consecutive_failures: 0,
+            },
+        );
+        dead.probes.lock().unwrap().insert(
+            10,
+            ProbeRecord {
+                last_ok: None,
+                block: None,
+                consecutive_failures: 3,
+            },
+        );
+        assert!(fresh.is_routable(10, window));
+        assert!(!dead.is_routable(10, window));
+        assert!(never.is_routable(10, window), "not yet probed");
     }
 }

@@ -66,8 +66,14 @@ async fn proxy(client: WebSocket, state: AppState, chain_id: u64, peer: SocketAd
                 return;
             }
         };
+        let window = state.config.answering_window();
+        let routable: Vec<_> = providers
+            .iter()
+            .filter(|p| p.is_routable(chain_id, window))
+            .cloned()
+            .collect();
         let mut candidates = selector::select(
-            providers,
+            &routable,
             chain_head,
             1,
             state.config.gateway.region.as_deref(),

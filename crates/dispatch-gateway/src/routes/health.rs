@@ -52,7 +52,7 @@ async fn providers_for_chain(
 /// The on-chain registry cannot say whether an endpoint answers; this can.
 async fn status(State(state): State<AppState>) -> Json<Value> {
     let registry = state.registry.load();
-    let window = Duration::from_secs((state.config.qos.probe_interval_secs * 3).max(30));
+    let window = state.config.answering_window();
     Json(status_report(&registry, window))
 }
 

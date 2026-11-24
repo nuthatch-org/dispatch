@@ -10,7 +10,7 @@ dataSources:
     source:
       abi: RPCDataService
       address: "0x7101d5c1a5c89c3647f5118da118e56c023ba0b9"
-      startBlock: 456917516
+      startBlock: 456917519
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.7

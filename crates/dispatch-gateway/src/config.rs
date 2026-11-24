@@ -70,6 +70,12 @@ pub struct ChainConfig {
 }
 
 impl Config {
+    /// How recently a provider must have answered a probe to count as answering: for routing and
+    /// for `/status`, which must agree.
+    pub fn answering_window(&self) -> std::time::Duration {
+        std::time::Duration::from_secs((self.qos.probe_interval_secs * 3).max(30))
+    }
+
     /// `[chain]`, else the provisioner's RPC, else none.
     pub fn arbitrum_rpc_url(&self) -> Option<&str> {
         self.chain
