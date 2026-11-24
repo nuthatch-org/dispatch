@@ -101,6 +101,10 @@ pub struct TapConfig {
     /// GraphTallyCollector contract address.
     #[serde(default = "default_tap_verifying_contract")]
     pub eip712_verifying_contract: Address,
+    /// Where the last signed RAV per collection is kept. Put it on a volume: if it is lost, the
+    /// next RAV for each collection starts from on-chain `tokensCollected`.
+    #[serde(default = "default_rav_ledger_path")]
+    pub rav_ledger_path: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -242,6 +246,9 @@ fn default_port() -> u16 {
 fn default_base_price_per_cu() -> u128 {
     4_000_000_000_000
 } // 4e-6 GRT/CU; see pricing_math test
+fn default_rav_ledger_path() -> String {
+    "rav-ledger.json".to_string()
+}
 fn default_tap_chain_id() -> u64 {
     42161
 }

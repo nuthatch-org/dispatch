@@ -6,6 +6,7 @@ pub mod metrics;
 pub mod probe;
 pub mod provisioner;
 pub mod qos;
+pub mod rav_ledger;
 pub mod registry;
 pub mod routes;
 pub mod selector;
