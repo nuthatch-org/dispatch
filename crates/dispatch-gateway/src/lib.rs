@@ -1,5 +1,6 @@
 pub mod affinity;
 pub mod attestation;
+pub mod auth;
 pub mod config;
 pub mod discovery;
 pub mod error;

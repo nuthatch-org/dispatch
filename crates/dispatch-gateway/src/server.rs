@@ -9,6 +9,7 @@ use tower_http::trace::TraceLayer;
 
 use crate::affinity::FilterAffinity;
 use crate::attestation::Attestor;
+use crate::auth::ApiKeys;
 use crate::rav_ledger::RavLedger;
 use crate::{config::Config, discovery, probe, provisioner, registry::Registry, routes};
 
@@ -33,6 +34,7 @@ pub struct AppState {
     pub filter_affinity: Arc<FilterAffinity>,
     pub rav_ledger: Arc<RavLedger>,
     pub attestor: Arc<Attestor>,
+    pub api_keys: Arc<ApiKeys>,
 }
 
 pub async fn run(config: Config) -> Result<()> {
@@ -86,6 +88,7 @@ pub async fn run(config: Config) -> Result<()> {
                 .map(|url| (url.to_string(), config.tap.horizon_staking_address)),
             config.tap.data_service_address,
         )),
+        api_keys: Arc::new(ApiKeys::new(config.auth.as_ref())),
     };
 
     // Initialise prometheus metrics (lazy statics — triggers registration).

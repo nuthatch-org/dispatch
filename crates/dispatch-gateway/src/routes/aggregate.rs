@@ -262,6 +262,7 @@ mod tests {
             filter_affinity: Arc::new(FilterAffinity::new(std::time::Duration::from_secs(1), 1)),
             rav_ledger: Arc::new(RavLedger::load(None).unwrap()),
             attestor: Arc::new(crate::attestation::Attestor::new(None, Address::ZERO)),
+            api_keys: Arc::new(crate::auth::ApiKeys::new(None)),
             config: Arc::new(config),
         }
     }

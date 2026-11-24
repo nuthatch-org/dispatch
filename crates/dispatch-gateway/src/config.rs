@@ -56,6 +56,8 @@ pub struct Config {
     pub chain: Option<ChainConfig>,
     /// Optional Seahorn (Solana structured data) proxy configuration.
     pub seahorn: Option<SeahornConfig>,
+    /// API keys. Without this section the gateway serves anyone.
+    pub auth: Option<crate::auth::AuthConfig>,
 }
 
 /// Read-only chain access. Kept apart from `[provisioning]`, which also needs a payer key that a

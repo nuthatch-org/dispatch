@@ -41,6 +41,15 @@ rav_ledger_path = "/var/lib/dispatch/rav-ledger.json"
 # [chain]
 # arbitrum_rpc_url = "https://arb1.arbitrum.io/rpc"
 
+# ── API keys ───────────────────────────────────────────────────────────────
+# Without this section the gateway serves, and pays for, requests from anyone.
+# Mint a key with: dispatch-gateway keygen <name>
+#
+# [[auth.keys]]
+# name = "graphops"
+# key_hash = "0x..."
+# requests_per_second = 500
+
 [qos]
 probe_interval_secs = 10
 # How many providers to dispatch to concurrently (first response wins).

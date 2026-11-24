@@ -25,6 +25,27 @@ lazy_static! {
         &["provider", "outcome"]
     )
     .unwrap();
+    pub static ref KEY_REQUESTS_TOTAL: CounterVec = register_counter_vec!(
+        "dispatch_gateway_key_requests_total",
+        "Requests served per API key",
+        &["key", "chain_id"]
+    )
+    .unwrap();
+    pub static ref KEY_CU_TOTAL: CounterVec = register_counter_vec!(
+        "dispatch_gateway_key_cu_total",
+        "Compute units charged per API key",
+        &["key", "chain_id"]
+    )
+    .unwrap();
+}
+
+/// Meter one served request against the caller.
+pub fn record_usage(key: &str, chain_id: u64, cu: u32) {
+    let chain = chain_id.to_string();
+    KEY_REQUESTS_TOTAL.with_label_values(&[key, &chain]).inc();
+    KEY_CU_TOTAL
+        .with_label_values(&[key, &chain])
+        .inc_by(cu as f64);
 }
 
 /// Increment the request counter and observe the duration.

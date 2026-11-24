@@ -26,6 +26,9 @@ pub enum GatewayError {
     #[error("receipt signing failed: {0}")]
     SigningError(String),
 
+    #[error("missing or unknown API key")]
+    Unauthorized,
+
     #[error("rate limit exceeded")]
     RateLimited,
 
@@ -42,6 +45,7 @@ impl IntoResponse for GatewayError {
         let (status, code, message) = match &self {
             GatewayError::InvalidRequest(_) => (StatusCode::BAD_REQUEST, -32600, self.to_string()),
             GatewayError::UnsupportedChain(_) => (StatusCode::NOT_FOUND, -32002, self.to_string()),
+            GatewayError::Unauthorized => (StatusCode::UNAUTHORIZED, -32001, self.to_string()),
             GatewayError::RateLimited => (StatusCode::TOO_MANY_REQUESTS, -32005, self.to_string()),
             GatewayError::NoProviders(_) | GatewayError::AllProvidersFailed(_) => {
                 (StatusCode::SERVICE_UNAVAILABLE, -32003, self.to_string())
