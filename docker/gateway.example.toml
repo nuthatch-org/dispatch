@@ -49,6 +49,7 @@ rav_ledger_path = "/var/lib/dispatch/rav-ledger.json"
 # name = "graphops"
 # key_hash = "0x..."
 # requests_per_second = 500
+# requests_per_day = 200000   # every request is paid from escrow; this bounds one key's spend
 
 # ── Pricing ────────────────────────────────────────────────────────────────
 # A USD list per million requests, converted to GRT when each receipt is signed.

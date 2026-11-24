@@ -32,6 +32,9 @@ pub enum GatewayError {
     #[error("rate limit exceeded")]
     RateLimited,
 
+    #[error("daily quota of {0} requests reached for this key; it resets at 00:00 UTC")]
+    DailyQuotaExceeded(u64),
+
     /// Consumer provided a header value that isn't a valid Ethereum address.
     #[error("invalid X-Consumer-Address: {0}")]
     InvalidConsumerAddress(String),
@@ -46,7 +49,9 @@ impl IntoResponse for GatewayError {
             GatewayError::InvalidRequest(_) => (StatusCode::BAD_REQUEST, -32600, self.to_string()),
             GatewayError::UnsupportedChain(_) => (StatusCode::NOT_FOUND, -32002, self.to_string()),
             GatewayError::Unauthorized => (StatusCode::UNAUTHORIZED, -32001, self.to_string()),
-            GatewayError::RateLimited => (StatusCode::TOO_MANY_REQUESTS, -32005, self.to_string()),
+            GatewayError::RateLimited | GatewayError::DailyQuotaExceeded(_) => {
+                (StatusCode::TOO_MANY_REQUESTS, -32005, self.to_string())
+            }
             GatewayError::NoProviders(_) | GatewayError::AllProvidersFailed(_) => {
                 (StatusCode::SERVICE_UNAVAILABLE, -32003, self.to_string())
             }
