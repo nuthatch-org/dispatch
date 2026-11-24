@@ -32,6 +32,9 @@ pub enum ServiceError {
     #[error("invalid JSON-RPC request: {0}")]
     InvalidRequest(String),
 
+    #[error("receipt value {got} is below this provider's minimum of {min}")]
+    Underpriced { got: u128, min: u128 },
+
     #[error("credit limit exceeded — fund escrow at https://lodestar-dashboard.com/dispatch")]
     CreditLimitExceeded,
 
@@ -52,7 +55,9 @@ impl IntoResponse for ServiceError {
             ServiceError::UnsupportedChain(_) | ServiceError::WebSocketDisabled => {
                 (StatusCode::NOT_FOUND, -32002, self.to_string())
             }
-            ServiceError::CreditLimitExceeded | ServiceError::InsufficientEscrow => {
+            ServiceError::CreditLimitExceeded
+            | ServiceError::InsufficientEscrow
+            | ServiceError::Underpriced { .. } => {
                 (StatusCode::PAYMENT_REQUIRED, -32005, self.to_string())
             }
             ServiceError::BackendError(_) | ServiceError::InvalidRequest(_) => {

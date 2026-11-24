@@ -43,6 +43,9 @@ aggregator_url = "http://dispatch-gateway:8080"
 # Maximum unconfirmed GRT wei per consumer before rejecting (default: 0.1 GRT).
 # credit_threshold = 100_000_000_000_000_000
 
+# Refuse receipts worth less than this (GRT wei) per request; a batch must cover every item.
+# min_value_per_request = 0
+
 # Arbitrum One RPC for escrow balance pre-checks (cached 30s per consumer).
 # Falls back to [collector].arbitrum_rpc_url when omitted.
 # Disable both to skip escrow checks (not recommended for production).
