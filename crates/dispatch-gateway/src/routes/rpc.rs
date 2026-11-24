@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::{
-    affinity, config::CapabilityTier, error::GatewayError, metrics, registry::Provider, selector,
-    server::AppState,
+    affinity, config::CapabilityTier, crosscheck, error::GatewayError, metrics, registry::Provider,
+    selector, server::AppState,
 };
 use dispatch_tap::create_receipt;
 
@@ -270,7 +270,8 @@ async fn process_request(
 ) -> Result<(JsonRpcResponse, Option<String>), GatewayError> {
     request.validate()?;
 
-    let candidates = {
+    let deterministic = requires_quorum(&request.method);
+    let (candidates, chain_head) = {
         let registry = state.registry.load();
         let (providers, chain_head) = registry
             .providers_for_chain(chain_id)
@@ -303,22 +304,29 @@ async fn process_request(
             &capable,
             |p| p.address,
         );
-        if let Some(provider) = pinned {
+        let candidates = if let Some(provider) = pinned {
             vec![provider]
         } else {
             selector::select(
                 &capable,
                 chain_head,
-                if requires_quorum(&request.method) {
-                    state.config.qos.quorum_k
+                if deterministic {
+                    state.config.qos.quorum_k.max(state.config.qos.concurrent_k)
                 } else {
                     state.config.qos.concurrent_k
                 },
                 state.config.gateway.region.as_deref(),
                 state.config.qos.region_bonus,
             )
-        }
+        };
+        (candidates, chain_head)
     };
+
+    let full_quorum = deterministic
+        && (state.config.qos.quorum_always
+            || candidates
+                .first()
+                .is_some_and(|p| state.suspects.is_suspect(p.address)));
 
     let cu = cu_weight_for(&request.method);
     let receipt_value = cu as u128 * state.config.tap.base_price_per_cu;
@@ -335,14 +343,15 @@ async fn process_request(
 
     let start = Instant::now();
 
-    let (response, attestation, winner) = if requires_quorum(&request.method) {
+    let (response, attestation, winner) = if full_quorum {
+        let k = state.config.qos.quorum_k.min(candidates.len());
         dispatch_quorum(
             state,
             chain_id,
             request,
-            &candidates,
+            &candidates[..k],
             receipt_value,
-            consumer_metadata,
+            consumer_metadata.clone(),
         )
         .await?
     } else {
@@ -352,10 +361,29 @@ async fn process_request(
             request,
             &candidates,
             receipt_value,
-            consumer_metadata,
+            consumer_metadata.clone(),
         )
         .await?
     };
+
+    if deterministic
+        && !full_quorum
+        && rand::random::<f64>() < state.config.qos.cross_check_rate
+        && crosscheck::is_settled(&request.method, &request.params, chain_head)
+    {
+        if let Some(other) = candidates.iter().find(|p| p.address != winner.address) {
+            spawn_cross_check(
+                state.clone(),
+                chain_id,
+                request.clone(),
+                response.result.clone(),
+                winner.address,
+                other.clone(),
+                receipt_value,
+                consumer_metadata,
+            );
+        }
+    }
 
     // Remember which node owns a newly created filter, and forget it once uninstalled. Only on a
     // successful response: an errored create has no id to pin, and forgetting on a failed
@@ -396,6 +424,55 @@ async fn process_request(
     );
 
     Ok((response, attestation))
+}
+
+/// Ask a second provider the same question off the hot path. A disagreement on a settled block
+/// means one of them is wrong; both go to full quorum until the suspicion expires.
+#[allow(clippy::too_many_arguments)]
+fn spawn_cross_check(
+    state: AppState,
+    chain_id: u64,
+    request: JsonRpcRequest,
+    first: Option<Value>,
+    first_provider: Address,
+    other: Arc<Provider>,
+    receipt_value: u128,
+    metadata: Bytes,
+) {
+    tokio::spawn(async move {
+        let second = dispatch_concurrent(
+            &state,
+            chain_id,
+            &request,
+            std::slice::from_ref(&other),
+            receipt_value,
+            metadata,
+        )
+        .await;
+        let outcome = match &second {
+            Ok((resp, _, _)) => crosscheck::compare(first.as_ref(), resp.result.as_ref()),
+            Err(_) => {
+                metrics::CROSS_CHECKS_TOTAL
+                    .with_label_values(&[&chain_id.to_string(), "failed"])
+                    .inc();
+                return;
+            }
+        };
+        if outcome == crosscheck::Outcome::Disagree {
+            state.suspects.mark(first_provider);
+            state.suspects.mark(other.address);
+            tracing::warn!(
+                method = %request.method,
+                chain_id,
+                first = %first_provider,
+                second = %other.address,
+                "cross-check disagreement on a settled block"
+            );
+        }
+        metrics::CROSS_CHECKS_TOTAL
+            .with_label_values(&[&chain_id.to_string(), outcome.label()])
+            .inc();
+    });
 }
 
 // ---------------------------------------------------------------------------

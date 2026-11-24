@@ -31,8 +31,14 @@ eip712_domain_name = "GraphTallyCollector"
 
 [qos]
 probe_interval_secs = 10
-# How many providers to dispatch to concurrently (first response wins).
+# How many providers to try, in order, before giving up.
 concurrent_k        = 3
+# Share of deterministic calls on settled blocks also asked of a second provider.
+# cross_check_rate  = 0.02
+# Providers caught disagreeing get full quorum for this long.
+# suspect_secs      = 600
+# Blanket quorum on every deterministic call (3x the cost).
+# quorum_always     = false
 # Score bonus for providers in the same region as this gateway instance.
 # region_bonus      = 0.15
 

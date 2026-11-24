@@ -117,6 +117,15 @@ pub struct QosConfig {
     /// Score bonus added for providers in the same region as this gateway.
     #[serde(default = "default_region_bonus")]
     pub region_bonus: f64,
+    /// Share of deterministic calls on settled blocks that a second provider is also asked.
+    #[serde(default = "default_cross_check_rate")]
+    pub cross_check_rate: f64,
+    /// How long a provider caught disagreeing has every deterministic call sent to quorum.
+    #[serde(default = "default_suspect_secs")]
+    pub suspect_secs: u64,
+    /// The old behaviour: every deterministic call to `quorum_k` providers, all of them paid.
+    #[serde(default)]
+    pub quorum_always: bool,
 }
 
 /// Static provider configuration.
@@ -255,6 +264,12 @@ fn default_probe_interval_secs() -> u64 {
 }
 fn default_concurrent_k() -> usize {
     3
+}
+fn default_cross_check_rate() -> f64 {
+    0.02
+}
+fn default_suspect_secs() -> u64 {
+    600
 }
 fn default_quorum_k() -> usize {
     3

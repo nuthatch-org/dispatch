@@ -94,7 +94,8 @@ eip712_verifying_contract = "0x8f69F5C07477Ac46FBc491B1E6D91E2bb0111A9e"
 
 [qos]
 probe_interval_secs = 10    # synthetic eth_blockNumber probe period
-concurrent_k        = 3     # dispatch to top-k providers, return first valid response
+concurrent_k        = 3     # providers tried in order before giving up
+cross_check_rate    = 0.02  # share of settled deterministic calls asked of a second provider
 region_bonus        = 0.15  # score boost for providers in the same region
 
 [discovery]

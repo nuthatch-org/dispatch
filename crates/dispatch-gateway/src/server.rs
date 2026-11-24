@@ -8,6 +8,7 @@ use k256::ecdsa::SigningKey;
 use tower_http::trace::TraceLayer;
 
 use crate::affinity::FilterAffinity;
+use crate::crosscheck::Suspects;
 use crate::{config::Config, discovery, probe, provisioner, registry::Registry, routes};
 
 pub type IpRateLimiter = DefaultKeyedRateLimiter<std::net::IpAddr>;
@@ -29,6 +30,7 @@ pub struct AppState {
     /// Which provider owns which filter. Filters are node-local state, so the follow-up call must
     /// reach the same node that created them; see `affinity`.
     pub filter_affinity: Arc<FilterAffinity>,
+    pub suspects: Arc<Suspects>,
 }
 
 pub async fn run(config: Config) -> Result<()> {
@@ -73,6 +75,9 @@ pub async fn run(config: Config) -> Result<()> {
             std::time::Duration::from_secs(300),
             100_000,
         )),
+        suspects: Arc::new(Suspects::new(std::time::Duration::from_secs(
+            config.qos.suspect_secs,
+        ))),
     };
 
     // Initialise prometheus metrics (lazy statics — triggers registration).

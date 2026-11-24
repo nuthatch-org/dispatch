@@ -1,5 +1,6 @@
 pub mod affinity;
 pub mod config;
+pub mod crosscheck;
 pub mod discovery;
 pub mod error;
 pub mod metrics;

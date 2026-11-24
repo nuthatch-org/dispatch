@@ -54,7 +54,6 @@ Subgraph: `https://api.studio.thegraph.com/query/1747796/rpc-network/v0.3.0`
 `0x575267ee…` deregistered at block 456,950,409 and re-registered ten blocks later; it is
 registered now.
 
-**A note on quorum.** Deterministic methods are dispatched to three providers and the majority
-result wins. Arbitrum One Standard — the busiest lane — currently has **two** providers, so a
-three-way quorum cannot form there and the fallback path is what actually runs. Worth keeping in
-view when reading any claim about quorum-verified responses.
+**A note on quorum.** Deterministic methods are answered by one provider and cross-checked against a
+second on a sample; full quorum applies only to providers caught disagreeing. With two providers on
+Arbitrum One Standard, a three-way quorum cannot form there and the majority is out of two.
