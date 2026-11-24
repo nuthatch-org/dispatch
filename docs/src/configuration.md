@@ -101,7 +101,7 @@ region_bonus        = 0.15  # score boost for providers in the same region
 [discovery]
 # The Graph subgraph URL for dynamic provider discovery.
 source        = "nest"              # or "chain": read RPCDataService events straight from Arbitrum
-nest_url      = "http://172.18.0.1:8120"
+nest_url      = "http://nest:8120"
 interval_secs = 60
 
 # Optional: static providers used at startup and as fallback.

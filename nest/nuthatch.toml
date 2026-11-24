@@ -1,0 +1,15 @@
+[nest]
+name = "dispatch-nest"
+chain = "arbitrum-one"
+chain_id = 42161
+rpc_urls = [
+    "https://arbitrum-one-rpc.publicnode.com",
+]
+schema_version = 1
+block_timestamps = true
+
+[[contracts]]
+alias = "dispatch"
+address = "0x7101d5c1a5c89c3647f5118da118e56c023ba0b9"
+start_block = 456917519
+abi = "abis/dispatch.json"

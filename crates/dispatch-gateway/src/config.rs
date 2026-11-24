@@ -204,7 +204,7 @@ pub struct DiscoveryConfig {
     /// or `nest`, a nuthatch nest indexing them at `nest_url`.
     #[serde(default)]
     pub source: DiscoverySource,
-    /// Base URL of the nest for `source = "nest"`, e.g. "http://172.18.0.1:8120".
+    /// Base URL of the nest for `source = "nest"`, e.g. "http://nest:8120".
     pub nest_url: Option<String>,
     /// First block to scan for `source = "chain"`; defaults to the contract's deployment.
     pub start_block: Option<u64>,
