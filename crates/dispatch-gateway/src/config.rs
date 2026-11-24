@@ -54,6 +54,8 @@ pub struct Config {
     pub provisioning: Option<ProvisioningConfig>,
     /// Optional Seahorn (Solana structured data) proxy configuration.
     pub seahorn: Option<SeahornConfig>,
+    /// USD price list. Without it, receipts are priced in GRT by `tap.base_price_per_cu`.
+    pub pricing: Option<crate::pricing::PricingConfig>,
 }
 
 /// Connection details for the local dispatch-service instance.

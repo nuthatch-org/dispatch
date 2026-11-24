@@ -8,6 +8,7 @@ pub fn router() -> Router<AppState> {
         .route("/health", get(health))
         .route("/version", get(version))
         .route("/providers/:chain_id", get(providers_for_chain))
+        .route("/pricing", get(pricing))
 }
 
 async fn health() -> Json<Value> {
@@ -41,5 +42,15 @@ async fn providers_for_chain(
                 .collect();
             Json(json!({ "chain_id": chain_id, "chain_head": head, "providers": list }))
         }
+    }
+}
+
+async fn pricing(State(state): State<AppState>) -> Json<Value> {
+    match &state.pricer {
+        Some(p) => Json(p.price_list()),
+        None => Json(json!({
+            "currency": "GRT",
+            "grt_wei_per_cu": state.config.tap.base_price_per_cu.to_string(),
+        })),
     }
 }

@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::{
-    affinity, config::CapabilityTier, error::GatewayError, metrics, registry::Provider, selector,
-    server::AppState,
+    affinity, config::CapabilityTier, error::GatewayError, metrics, pricing::PriceClass,
+    registry::Provider, selector, server::AppState,
 };
 use dispatch_tap::create_receipt;
 
@@ -321,7 +321,13 @@ async fn process_request(
     };
 
     let cu = cu_weight_for(&request.method);
-    let receipt_value = cu as u128 * state.config.tap.base_price_per_cu;
+    let receipt_value = match &state.pricer {
+        Some(p) => p.receipt_value(PriceClass::of(
+            &request.method,
+            &required_tier(&request.method, &request.params),
+        )),
+        None => cu as u128 * state.config.tap.base_price_per_cu,
+    };
 
     // Encode gateway payer address (bytes 0-19) + method name (bytes 20+) in metadata.
     // Providers extract bytes 0-19 for escrow routing — this is always the gateway's

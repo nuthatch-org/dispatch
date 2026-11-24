@@ -8,6 +8,7 @@ use k256::ecdsa::SigningKey;
 use tower_http::trace::TraceLayer;
 
 use crate::affinity::FilterAffinity;
+use crate::pricing::Pricer;
 use crate::{config::Config, discovery, probe, provisioner, registry::Registry, routes};
 
 pub type IpRateLimiter = DefaultKeyedRateLimiter<std::net::IpAddr>;
@@ -29,6 +30,7 @@ pub struct AppState {
     /// Which provider owns which filter. Filters are node-local state, so the follow-up call must
     /// reach the same node that created them; see `affinity`.
     pub filter_affinity: Arc<FilterAffinity>,
+    pub pricer: Option<Arc<Pricer>>,
 }
 
 pub async fn run(config: Config) -> Result<()> {
@@ -73,6 +75,12 @@ pub async fn run(config: Config) -> Result<()> {
             std::time::Duration::from_secs(300),
             100_000,
         )),
+        pricer: config
+            .pricing
+            .clone()
+            .map(Pricer::new)
+            .transpose()?
+            .map(Arc::new),
     };
 
     // Initialise prometheus metrics (lazy statics — triggers registration).
@@ -82,6 +90,12 @@ pub async fn run(config: Config) -> Result<()> {
     tokio::spawn(probe::run(state.clone()));
     tokio::spawn(discovery::run(state.clone()));
     tokio::spawn(provisioner::run(state.clone()));
+    if let Some(p) = &state.pricer {
+        tokio::spawn(crate::pricing::run_feed(
+            p.clone(),
+            state.http_client.clone(),
+        ));
+    }
 
     let app = routes::router(state.clone()).layer(TraceLayer::new_for_http());
 
