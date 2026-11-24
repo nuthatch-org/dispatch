@@ -192,8 +192,7 @@ async fn run_once(
             service_provider,
             data_service,
             &payer_hex,
-            rpc_url,
-            tally_collector,
+            rpc_url.map(|url| (url, tally_collector)),
         )
         .await
         {
@@ -211,8 +210,8 @@ async fn aggregate_payer(
     service_provider: alloy_primitives::Address,
     data_service: alloy_primitives::Address,
     payer_hex: &str,
-    rpc_url: Option<&str>,
-    tally_collector: alloy_primitives::Address,
+    // Arbitrum RPC URL and GraphTallyCollector address, for the on-chain floor.
+    on_chain: Option<(&str, alloy_primitives::Address)>,
 ) -> anyhow::Result<()> {
     let rows = fetch_by_payer(pool, payer_hex).await?;
     if rows.is_empty() {
@@ -251,8 +250,8 @@ async fn aggregate_payer(
     // authoritative lower bound: any RAV with valueAggregate <= tokensCollected
     // will revert on-chain.  Seeding from on-chain means a DB reset or a
     // data-service migration never causes collect() to revert indefinitely.
-    let on_chain_floor = match rpc_url {
-        Some(url) => match fetch_on_chain_tokens_collected(
+    let on_chain_floor = match on_chain {
+        Some((url, tally_collector)) => match fetch_on_chain_tokens_collected(
             client,
             url,
             tally_collector,

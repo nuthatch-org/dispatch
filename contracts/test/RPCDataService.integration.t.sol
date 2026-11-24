@@ -137,12 +137,10 @@ contract RPCDataServiceIntegrationTest is Test {
         controller = new ControllerMock(governor);
         staking = new MockHorizonStakingIntegration();
 
-        // 2. Predict proxy addresses for GraphPayments and PaymentsEscrow.
-        //    Deploy order: paymentsImpl (n), paymentsProxy (n+1),
-        //                  escrowImpl (n+2), escrowProxy (n+3)
-        uint64 n = vm.getNonce(address(this));
-        address predictedPaymentsProxy = vm.computeCreateAddress(address(this), n + 1);
-        address predictedEscrowProxy = vm.computeCreateAddress(address(this), n + 3);
+        // 2. Fix the proxy addresses up front. Predicting them from the test's nonce broke when
+        //    forge began spending nonces of its own during deployment.
+        address predictedPaymentsProxy = makeAddr("GraphPaymentsProxy");
+        address predictedEscrowProxy = makeAddr("PaymentsEscrowProxy");
 
         // 3. Register all proxies before deploying any GraphDirectory-based contract
         //    (GraphDirectory reads from controller in its constructor and stores as immutables).
@@ -157,29 +155,23 @@ contract RPCDataServiceIntegrationTest is Test {
         controller.setContractProxy(keccak256("GraphProxyAdmin"), address(1));
         controller.setContractProxy(keccak256("Curation"), address(1));
 
-        // 4. Deploy GraphPayments (impl + proxy) at nonces n and n+1.
+        // 4. Deploy GraphPayments (impl + proxy at its fixed address).
         GraphPayments paymentsImpl = new GraphPayments(address(controller), 0); // protocolCut=0
-        payments = GraphPayments(
-            address(
-                new TransparentUpgradeableProxy(
-                    address(paymentsImpl),
-                    address(1), // proxyAdmin — not used in tests
-                    abi.encodeCall(GraphPayments.initialize, ())
-                )
-            )
+        deployCodeTo(
+            "TransparentUpgradeableProxy.sol:TransparentUpgradeableProxy",
+            abi.encode(address(paymentsImpl), address(1), abi.encodeCall(GraphPayments.initialize, ())),
+            predictedPaymentsProxy
         );
-        assertEq(address(payments), predictedPaymentsProxy, "payments address mismatch");
+        payments = GraphPayments(predictedPaymentsProxy);
 
-        // 5. Deploy PaymentsEscrow (impl + proxy) at nonces n+2 and n+3.
+        // 5. Deploy PaymentsEscrow (impl + proxy at its fixed address).
         PaymentsEscrow escrowImpl = new PaymentsEscrow(address(controller), 0); // withdrawThawing=0
-        escrow = PaymentsEscrow(
-            address(
-                new TransparentUpgradeableProxy(
-                    address(escrowImpl), address(1), abi.encodeCall(PaymentsEscrow.initialize, ())
-                )
-            )
+        deployCodeTo(
+            "TransparentUpgradeableProxy.sol:TransparentUpgradeableProxy",
+            abi.encode(address(escrowImpl), address(1), abi.encodeCall(PaymentsEscrow.initialize, ())),
+            predictedEscrowProxy
         );
-        assertEq(address(escrow), predictedEscrowProxy, "escrow address mismatch");
+        escrow = PaymentsEscrow(predictedEscrowProxy);
 
         // 6. GraphTallyCollector — not upgradeable.
         //    revokeSignerThawingPeriod=0: signers can be revoked immediately (fine for tests).
