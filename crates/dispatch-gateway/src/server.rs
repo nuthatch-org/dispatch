@@ -8,6 +8,7 @@ use k256::ecdsa::SigningKey;
 use tower_http::trace::TraceLayer;
 
 use crate::affinity::FilterAffinity;
+use crate::attestation::Attestor;
 use crate::rav_ledger::RavLedger;
 use crate::{config::Config, discovery, probe, provisioner, registry::Registry, routes};
 
@@ -31,6 +32,7 @@ pub struct AppState {
     /// reach the same node that created them; see `affinity`.
     pub filter_affinity: Arc<FilterAffinity>,
     pub rav_ledger: Arc<RavLedger>,
+    pub attestor: Arc<Attestor>,
 }
 
 pub async fn run(config: Config) -> Result<()> {
@@ -78,6 +80,15 @@ pub async fn run(config: Config) -> Result<()> {
         rav_ledger: Arc::new(RavLedger::load(Some(
             config.tap.rav_ledger_path.clone().into(),
         ))?),
+        attestor: Arc::new(Attestor::new(
+            config.provisioning.as_ref().map(|p| {
+                (
+                    p.arbitrum_rpc_url.clone(),
+                    config.tap.horizon_staking_address,
+                )
+            }),
+            config.tap.data_service_address,
+        )),
     };
 
     // Initialise prometheus metrics (lazy statics — triggers registration).
