@@ -185,7 +185,7 @@ async fn run_once(
     let endpoint = format!("{aggregator_url}/rav/aggregate");
 
     for payer_hex in payers {
-        if let Err(e) = aggregate_payer(
+        let result = aggregate_payer(
             pool,
             client,
             &endpoint,
@@ -195,8 +195,11 @@ async fn run_once(
             rpc_url,
             tally_collector,
         )
-        .await
-        {
+        .await;
+        crate::metrics::RAVS_TOTAL
+            .with_label_values(&[if result.is_ok() { "ok" } else { "failed" }])
+            .inc();
+        if let Err(e) = result {
             tracing::warn!(payer = %payer_hex, "RAV aggregation failed for payer: {e:#}");
         }
     }

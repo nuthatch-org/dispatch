@@ -12,6 +12,7 @@ use serde_json::Value;
 use crate::{
     attestation, db,
     error::ServiceError,
+    metrics,
     rpc::{proxy, types::JsonRpcRequest},
     server::AppState,
     tap,
@@ -105,8 +106,13 @@ async fn rpc_handler(
             let requests = parse_batch(items)?;
             tracing::debug!(count = requests.len(), chain_id, "dispatching batch");
 
-            let responses =
-                proxy::forward_batch(&state.http_client, &backend_url, &requests).await?;
+            let started = std::time::Instant::now();
+            let responses = observe(
+                chain_id,
+                started,
+                proxy::forward_batch(&state.http_client, &backend_url, &requests).await,
+            )?;
+            paid(chain_id, validated.receipt.value);
 
             // --- Increment consumer credit ---
             {
@@ -136,7 +142,13 @@ async fn rpc_handler(
             tracing::debug!(method = %request.method, chain_id, "dispatching");
 
             // --- Forward to backend Ethereum client ---
-            let response = proxy::forward(&state.http_client, &backend_url, &request).await?;
+            let started = std::time::Instant::now();
+            let response = observe(
+                chain_id,
+                started,
+                proxy::forward(&state.http_client, &backend_url, &request).await,
+            )?;
+            paid(chain_id, validated.receipt.value);
 
             // --- Increment consumer credit ---
             {
@@ -213,6 +225,28 @@ fn parse_batch(items: Vec<Value>) -> Result<Vec<JsonRpcRequest>, ServiceError> {
             Ok(req)
         })
         .collect()
+}
+
+fn observe<T>(
+    chain_id: u64,
+    started: std::time::Instant,
+    result: Result<T, ServiceError>,
+) -> Result<T, ServiceError> {
+    let chain = chain_id.to_string();
+    let outcome = if result.is_ok() { "ok" } else { "error" };
+    metrics::REQUESTS_TOTAL
+        .with_label_values(&[&chain, outcome])
+        .inc();
+    metrics::REQUEST_DURATION
+        .with_label_values(&[&chain])
+        .observe(started.elapsed().as_secs_f64());
+    result
+}
+
+fn paid(chain_id: u64, value: u128) {
+    metrics::RECEIPT_GRT_TOTAL
+        .with_label_values(&[&chain_id.to_string()])
+        .inc_by(metrics::grt(value));
 }
 
 #[cfg(test)]

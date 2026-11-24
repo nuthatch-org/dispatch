@@ -1308,6 +1308,8 @@ dependencies = [
  "futures-util",
  "hex",
  "k256",
+ "lazy_static",
+ "prometheus",
  "reqwest",
  "serde",
  "serde_json",
