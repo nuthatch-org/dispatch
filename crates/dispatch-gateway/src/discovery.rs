@@ -1,51 +1,16 @@
-//! Dynamic provider discovery, from the RPC network subgraph or straight from the contract.
-//!
-//! Polls the RPC network subgraph at a configurable interval and rebuilds the
-//! provider registry from the response. Providers that disappear from the
-//! subgraph (deregistered/inactive) are automatically removed.
+//! Dynamic provider discovery from `RPCDataService`'s own events: read straight from the chain, or
+//! from a nuthatch nest that indexes them. Rebuilt every interval; a provider that deregisters or
+//! stops its last service drops out.
 
 use std::sync::Arc;
 
-use serde::Deserialize;
 use tokio::time::{interval, Duration, MissedTickBehavior};
 
 use crate::{
-    chain_discovery::ChainScanner,
-    config::{DiscoverySource, ProviderConfig},
+    chain_discovery::{ChainScanner, NestSource},
+    config::DiscoverySource,
     server::AppState,
 };
-
-// ---------------------------------------------------------------------------
-// Subgraph response types
-// ---------------------------------------------------------------------------
-
-#[derive(Deserialize)]
-struct SubgraphResponse {
-    data: SubgraphData,
-}
-
-#[derive(Deserialize)]
-struct SubgraphData {
-    indexers: Vec<IndexerEntry>,
-}
-
-#[derive(Deserialize)]
-struct IndexerEntry {
-    address: String,
-    endpoint: String,
-    /// On-chain `geoHash` field from ProviderRegistered — used as the routing region.
-    #[serde(rename = "geoHash", default)]
-    geo_hash: Option<String>,
-    chains: Vec<ChainEntry>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ChainEntry {
-    chain_id: String,
-    /// Capability tier: 0=Standard 1=Archive 2=Debug 3=WebSocket
-    tier: i32,
-}
 
 // ---------------------------------------------------------------------------
 // Discovery loop
@@ -54,16 +19,26 @@ struct ChainEntry {
 pub async fn run(state: AppState) {
     let cfg = match &state.config.discovery {
         Some(c) => c.clone(),
-        None => return, // No subgraph configured — use static providers only.
+        None => return, // No discovery configured: static providers only.
     };
 
     let mut tick = interval(Duration::from_secs(cfg.interval_secs));
     tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
-    let mut scanner = match cfg.source {
-        DiscoverySource::Subgraph => None,
+    enum Source {
+        Chain(ChainScanner),
+        Nest(NestSource),
+    }
+    let mut source = match cfg.source {
+        DiscoverySource::Nest => match &cfg.nest_url {
+            Some(url) => Source::Nest(NestSource::new(url)),
+            None => {
+                tracing::error!("discovery source is nest but no nest_url is set");
+                return;
+            }
+        },
         DiscoverySource::Chain => match state.config.arbitrum_rpc_url() {
-            Some(url) => Some(ChainScanner::new(
+            Some(url) => Source::Chain(ChainScanner::new(
                 url.to_string(),
                 state.config.tap.data_service_address,
                 cfg.start_block
@@ -76,27 +51,22 @@ pub async fn run(state: AppState) {
         },
     };
 
-    tracing::info!(
-        source = ?cfg.source,
-        subgraph_url = %cfg.subgraph_url,
-        interval_secs = cfg.interval_secs,
-        "discovery task started"
-    );
+    tracing::info!(source = ?cfg.source, interval_secs = cfg.interval_secs, "discovery task started");
 
     loop {
         tick.tick().await;
 
-        let fetched = match scanner.as_mut() {
-            Some(s) => s.poll(&state.http_client).await,
-            None => fetch_providers(&state.http_client, &cfg.subgraph_url).await,
+        let fetched = match &mut source {
+            Source::Chain(s) => s.poll(&state.http_client).await,
+            Source::Nest(n) => n.poll(&state.http_client).await,
         };
         match fetched {
             Ok(mut providers) if !providers.is_empty() => {
                 // If a static provider entry exists for the same address:
                 //  - Override the endpoint (Docker internal hostname instead of public URL).
                 //  - Merge any chain capabilities declared in static config but absent from
-                //    the subgraph. This lets operators extend a provider's chain list before
-                //    the on-chain startService() call propagates to the subgraph.
+                //    the registry. This lets operators extend a provider's chain list before
+                //    the on-chain startService() call is seen by discovery.
                 for p in &mut providers {
                     if let Some(s) = state
                         .config
@@ -159,77 +129,4 @@ pub async fn run(state: AppState) {
             Err(e) => tracing::warn!(error = %e, "subgraph discovery failed"),
         }
     }
-}
-
-async fn fetch_providers(
-    client: &reqwest::Client,
-    subgraph_url: &str,
-) -> anyhow::Result<Vec<ProviderConfig>> {
-    let query = r#"{
-        "query": "{ indexers(where: { registered: true }, first: 1000) { address endpoint geoHash chains(where: { active: true }) { chainId tier } } }"
-    }"#;
-
-    let resp: SubgraphResponse = client
-        .post(subgraph_url)
-        .header("Content-Type", "application/json")
-        .body(query)
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
-
-    let mut providers = Vec::new();
-
-    for indexer in resp.data.indexers {
-        let address = match indexer.address.parse() {
-            Ok(a) => a,
-            Err(e) => {
-                tracing::warn!(address = %indexer.address, error = %e, "skipping indexer with invalid address");
-                continue;
-            }
-        };
-
-        // Build per-chain capability map from all active chain registrations.
-        // A provider may have multiple registrations per chain (one per tier),
-        // each independently activated via startService/stopService.
-        let mut chain_caps: std::collections::HashMap<u64, Vec<crate::config::CapabilityTier>> =
-            std::collections::HashMap::new();
-
-        for c in &indexer.chains {
-            let Ok(chain_id) = c.chain_id.parse::<u64>() else {
-                continue;
-            };
-            let tier = match c.tier {
-                0 => Some(crate::config::CapabilityTier::Standard),
-                1 => Some(crate::config::CapabilityTier::Archive),
-                2 => Some(crate::config::CapabilityTier::Debug),
-                _ => None, // tier 3 = WebSocket — transport layer, not a routing tier
-            };
-            if let Some(t) = tier {
-                let entry = chain_caps.entry(chain_id).or_default();
-                if !entry.contains(&t) {
-                    entry.push(t);
-                }
-            }
-        }
-
-        if chain_caps.is_empty() {
-            continue;
-        }
-
-        let chains: Vec<u64> = chain_caps.keys().copied().collect();
-
-        providers.push(ProviderConfig {
-            address,
-            endpoint: indexer.endpoint.trim_end_matches('/').to_string(),
-            chains,
-            region: indexer.geo_hash.filter(|s| !s.is_empty()),
-            capabilities: Vec::new(), // unused — chain_capabilities drives routing
-            chain_capabilities: chain_caps,
-            price_floor: None,
-        });
-    }
-
-    Ok(providers)
 }
