@@ -50,6 +50,20 @@ rav_ledger_path = "/var/lib/dispatch/rav-ledger.json"
 # key_hash = "0x..."
 # requests_per_second = 500
 
+# ── Pricing ────────────────────────────────────────────────────────────────
+# A USD list per million requests, converted to GRT when each receipt is signed.
+# Without this section receipts use base_price_per_cu above. GET /pricing shows the live list.
+#
+# [pricing]
+# standard_usd_per_million = 1.0
+# archive_usd_per_million  = 3.0
+# trace_usd_per_million    = 4.0     # debug_*, trace_*, eth_getLogs
+# grt_usd                  = 0.08    # used until the feed answers
+#
+# [pricing.grt_usd_feed]
+# url     = "https://api.coingecko.com/api/v3/simple/price?ids=the-graph&vs_currencies=usd"
+# pointer = "/the-graph/usd"
+
 [qos]
 probe_interval_secs = 10
 # How many providers to try, in order, before giving up.

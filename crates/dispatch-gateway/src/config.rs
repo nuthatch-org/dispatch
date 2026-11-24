@@ -58,6 +58,8 @@ pub struct Config {
     pub seahorn: Option<SeahornConfig>,
     /// API keys. Without this section the gateway serves anyone.
     pub auth: Option<crate::auth::AuthConfig>,
+    /// USD price list. Without it, receipts are priced in GRT by `tap.base_price_per_cu`.
+    pub pricing: Option<crate::pricing::PricingConfig>,
 }
 
 /// Read-only chain access. Kept apart from `[provisioning]`, which also needs a payer key that a

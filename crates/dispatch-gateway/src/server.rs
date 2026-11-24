@@ -11,6 +11,7 @@ use crate::affinity::FilterAffinity;
 use crate::attestation::Attestor;
 use crate::auth::ApiKeys;
 use crate::crosscheck::Suspects;
+use crate::pricing::Pricer;
 use crate::rav_ledger::RavLedger;
 use crate::{config::Config, discovery, probe, provisioner, registry::Registry, routes};
 
@@ -37,6 +38,7 @@ pub struct AppState {
     pub attestor: Arc<Attestor>,
     pub api_keys: Arc<ApiKeys>,
     pub suspects: Arc<Suspects>,
+    pub pricer: Option<Arc<Pricer>>,
 }
 
 pub async fn run(config: Config) -> Result<()> {
@@ -94,6 +96,12 @@ pub async fn run(config: Config) -> Result<()> {
         suspects: Arc::new(Suspects::new(std::time::Duration::from_secs(
             config.qos.suspect_secs,
         ))),
+        pricer: config
+            .pricing
+            .clone()
+            .map(Pricer::new)
+            .transpose()?
+            .map(Arc::new),
     };
 
     // Initialise prometheus metrics (lazy statics — triggers registration).
@@ -103,6 +111,12 @@ pub async fn run(config: Config) -> Result<()> {
     tokio::spawn(probe::run(state.clone()));
     tokio::spawn(discovery::run(state.clone()));
     tokio::spawn(provisioner::run(state.clone()));
+    if let Some(p) = &state.pricer {
+        tokio::spawn(crate::pricing::run_feed(
+            p.clone(),
+            state.http_client.clone(),
+        ));
+    }
 
     let app = routes::router(state.clone()).layer(TraceLayer::new_for_http());
 

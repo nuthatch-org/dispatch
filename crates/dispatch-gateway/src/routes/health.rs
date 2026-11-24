@@ -11,6 +11,7 @@ pub fn router() -> Router<AppState> {
         .route("/version", get(version))
         .route("/providers/:chain_id", get(providers_for_chain))
         .route("/status", get(status))
+        .route("/pricing", get(pricing))
 }
 
 async fn health() -> Json<Value> {
@@ -127,6 +128,16 @@ pub fn status_report(registry: &Registry, window: Duration) -> Value {
             "debug": "debug_* and trace_*",
         },
     })
+}
+
+async fn pricing(State(state): State<AppState>) -> Json<Value> {
+    match &state.pricer {
+        Some(p) => Json(p.price_list()),
+        None => Json(json!({
+            "currency": "GRT",
+            "grt_wei_per_cu": state.config.tap.base_price_per_cu.to_string(),
+        })),
+    }
 }
 
 #[cfg(test)]

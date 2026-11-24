@@ -263,6 +263,7 @@ mod tests {
             rav_ledger: Arc::new(RavLedger::load(None).unwrap()),
             attestor: Arc::new(crate::attestation::Attestor::new(None, Address::ZERO)),
             api_keys: Arc::new(crate::auth::ApiKeys::new(None)),
+            pricer: None,
             suspects: Arc::new(crate::crosscheck::Suspects::new(
                 std::time::Duration::from_secs(1),
             )),
