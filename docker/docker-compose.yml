@@ -5,13 +5,11 @@ version: "3.9"
 # Services:
 #   dispatch-gateway  — QoS-aware gateway, TAP receipt signing, /metrics, /ws
 #   dispatch-service  — Indexer service, JSON-RPC proxy, TAP receipt validation
-#   dispatch-oracle   — Block header oracle; submits L1 state roots to Arbitrum for Tier 1 fraud proofs
 #   postgres      — PostgreSQL for TAP receipt and RAV persistence
 #
 # Quick start:
 #   cp docker/gateway.example.toml docker/gateway.toml
 #   cp docker/config.example.toml  docker/config.toml
-#   cp docker/oracle.example.toml  docker/oracle.toml
 #   # Fill in private keys, provider addresses, and backend URLs.
 #   docker compose -f docker/docker-compose.yml up
 
@@ -72,17 +70,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
-
-  dispatch-oracle:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.oracle
-    restart: unless-stopped
-    volumes:
-      - ./oracle.toml:/etc/dispatch/oracle.toml:ro
-    environment:
-      DISPATCH_ORACLE_CONFIG: /etc/dispatch/oracle.toml
-      RUST_LOG: info
 
 volumes:
   postgres_data:

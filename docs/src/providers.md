@@ -211,7 +211,24 @@ The gateway verifies that each receipt was signed by itself, aggregates them int
 
 ---
 
-## 4. Run with Docker Compose
+## 4. Run beside the node you already have
+
+If you already run an Ethereum or Arbitrum node for graph-node, this is the whole deployment: `dispatch-service` and its Postgres, nothing else. Dispatch earns on spare capacity of a node you are paying for anyway, which is the only way the sums work.
+
+```bash
+cp docker/config.example.toml docker/config.toml
+# A node on this host is http://host.docker.internal:8545 from inside the container.
+docker compose -f docker/provider-compose.yml up -d
+curl -s http://127.0.0.1:7700/health
+curl -s http://127.0.0.1:7700/block/42161     # should return your node's head
+```
+
+Put your reverse proxy in front of `127.0.0.1:7700` with TLS and advertise that public URL when you register. Check it from outside your network before registering: a registration pointing at an endpoint that does not answer is worse than none, because every gateway will keep trying it. The gateway's `GET /status` shows whether it can reach you.
+
+Leave `chains.websocket` off unless you accept that one receipt pays for a whole connection. Set `tap.min_value_per_request` if you want to refuse traffic below your own price.
+
+## 4b. The full stack with Docker Compose
+
 
 Docker Compose is the recommended deployment. It runs `dispatch-service`, `dispatch-gateway`, and PostgreSQL together with health checks and automatic restarts.
 
