@@ -2,7 +2,6 @@
 config.toml
 docker/config.toml
 docker/gateway.toml
-docker/oracle.toml
 agent.config.json
 *.key
 *.env
