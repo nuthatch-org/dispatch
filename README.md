@@ -156,7 +156,9 @@ Key responsibilities:
 - **Per-IP rate limiting** — token-bucket via `governor` (configurable RPS + burst)
 - **Prometheus metrics** — `dispatch_requests_total`, `dispatch_request_duration_seconds`
 
-Routes: `POST /rpc/{chain_id}` · `POST /rpc/{chain_id}/{consumer_address}` · `GET /ws/{chain_id}` · `GET /health` · `GET /version` · `GET /providers/{chain_id}` · `GET /metrics`
+Routes: `POST /rpc/{chain_id}` · `POST /rpc/{chain_id}/{consumer_address}` · `GET /ws/{chain_id}` · `GET /health` · `GET /version` · `GET /providers/{chain_id}` · `GET /status` · `GET /metrics`
+
+`GET /status` reports, from the gateway's own probes, how many registered providers are actually answering, per chain, with each provider's head lag and capability tiers. On-chain registration says nothing about whether an endpoint answers; this does.
 
 ### `consumer-sdk`
 TypeScript package for dApp developers who want to send requests through the Dispatch network without running a gateway.

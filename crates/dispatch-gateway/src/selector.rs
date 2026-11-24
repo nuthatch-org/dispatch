@@ -90,7 +90,8 @@ mod tests {
             chains: vec![1],
             region: None,
             chain_capabilities: std::collections::HashMap::new(),
-            qos: ProviderQos::default(),
+            qos: Arc::new(ProviderQos::default()),
+            probes: Arc::default(),
         })
     }
 
@@ -101,7 +102,8 @@ mod tests {
             chains: vec![1],
             region: Some(region.to_string()),
             chain_capabilities: std::collections::HashMap::new(),
-            qos: ProviderQos::default(),
+            qos: Arc::new(ProviderQos::default()),
+            probes: Arc::default(),
         })
     }
 
