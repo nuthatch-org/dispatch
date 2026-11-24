@@ -54,6 +54,8 @@ pub struct Config {
     pub provisioning: Option<ProvisioningConfig>,
     /// Optional Seahorn (Solana structured data) proxy configuration.
     pub seahorn: Option<SeahornConfig>,
+    /// API keys. Without this section the gateway serves anyone.
+    pub auth: Option<crate::auth::AuthConfig>,
 }
 
 /// Connection details for the local dispatch-service instance.

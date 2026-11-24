@@ -29,6 +29,15 @@ eip712_domain_name = "GraphTallyCollector"
 # Break-even vs Alchemy on eth_call at ~$0.10/GRT. See config.rs pricing_math test for derivation.
 # base_price_per_cu = 4000000000000
 
+# ── API keys ───────────────────────────────────────────────────────────────
+# Without this section the gateway serves, and pays for, requests from anyone.
+# Mint a key with: dispatch-gateway keygen <name>
+#
+# [[auth.keys]]
+# name = "graphops"
+# key_hash = "0x..."
+# requests_per_second = 500
+
 [qos]
 probe_interval_secs = 10
 # How many providers to dispatch to concurrently (first response wins).

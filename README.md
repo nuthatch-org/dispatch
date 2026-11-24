@@ -31,7 +31,7 @@ Inspired by the [Q3 2026 "Experimental JSON-RPC Data Service"](https://thegraph.
 | Subgraph | ✅ Live on The Graph Studio |
 | npm packages | ✅ Published (`@lodestar-dispatch/consumer-sdk`, `@lodestar-dispatch/indexer-agent`) |
 | Active providers | ⚠️ **2 registered on-chain, 0 answering** (checked 2026-08-28) — `rpc.cargopete.com` fails its TLS handshake; the second provider's Railway endpoints return "Application not found". The contract and registrations are live; nothing is serving. See [docs/outage-2026-08-28.md](docs/outage-2026-08-28.md). |
-| Consumer-pays escrow | ✅ Enforced — `X-Consumer-Address` required; no free queries |
+| API keys | ✅ Enforced when `[auth]` is configured — 401 without a key; per-key rate limits and CU metering |
 | Receipt signing & validation | ✅ Working — every request carries a signed EIP-712 TAP receipt |
 | Receipt persistence | ✅ Working — stored in `tap_receipts` table in postgres |
 | RAV aggregation (off-chain) | ✅ Working — gateway `/rav/aggregate` batches receipts into signed RAVs every 60s |
@@ -162,9 +162,7 @@ Key responsibilities:
 - Select top-k providers via weighted random sampling, dispatch concurrently, return first valid response
 - **JSON-RPC batch** — concurrent per-item dispatch, per-item error isolation
 - **WebSocket proxy** — bidirectional forwarding for real-time subscriptions
-- **Consumer address identification** — two methods supported:
-  - `X-Consumer-Address` header (standard path); returns `402` if missing or invalid
-  - URL path: `POST /rpc/{chain_id}/{consumer_address}` — for clients that cannot set custom headers (graph-node, Ethereum execution clients, curl without header flags). The address is validated and encoded into the TAP receipt metadata identically to the header path.
+- **API keys** — `X-Api-Key`, `Authorization: Bearer`, or in the path as `POST /rpc/{chain_id}/{key}` and `/ws/{chain_id}/{key}` for clients that cannot set headers (graph-node). Only keccak256 hashes are configured; `dispatch-gateway keygen <name>` mints one. Per-key rate limits and `dispatch_gateway_key_cu_total` metering. Without an `[auth]` section the gateway serves anyone and says so at startup.
 - Create and sign a fresh TAP receipt per request (EIP-712, random nonce, CU-weighted value, consumer address in metadata)
 - **Dynamic discovery** — polls the RPC network subgraph; rebuilds registry on each poll
 - **Per-IP rate limiting** — token-bucket via `governor` (configurable RPS + burst)
@@ -363,7 +361,7 @@ Configuration via environment variables:
 npm install @lodestar-dispatch/consumer-sdk
 ```
 
-The live gateway is `https://gateway.lodestar-dashboard.com`. All requests require an `X-Consumer-Address` header for billing and rate-limiting. The gateway manages its own on-chain GRT escrow — gateway users do not need to deposit GRT themselves. See [docs/consumers.md](docs/src/consumers.md).
+The live gateway is `https://gateway.lodestar-dashboard.com`. Requests need an API key. The gateway manages its own on-chain GRT escrow — gateway users do not need to deposit GRT themselves. See [docs/consumers.md](docs/src/consumers.md).
 
 ```typescript
 import { DISPATCHClient } from "@lodestar-dispatch/consumer-sdk";

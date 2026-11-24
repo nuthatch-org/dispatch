@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::{
-    affinity, config::CapabilityTier, error::GatewayError, metrics, registry::Provider, selector,
-    server::AppState,
+    affinity, auth::Caller, config::CapabilityTier, error::GatewayError, metrics,
+    registry::Provider, selector, server::AppState,
 };
 use dispatch_tap::create_receipt;
 
@@ -37,24 +37,30 @@ async fn rpc_handler(
     Json(body): Json<Value>,
 ) -> Result<Response, GatewayError> {
     let consumer = extract_consumer_address(&headers)?;
-    dispatch_rpc(state, chain_id, peer, consumer, body).await
+    let caller = state.api_keys.authenticate(None, &headers)?;
+    dispatch_rpc(state, chain_id, peer, consumer, caller, body).await
 }
 
-/// Route handler for POST /rpc/{chain_id}/{consumer_address}
+/// Route handler for POST /rpc/{chain_id}/{key_or_consumer}
 ///
-/// Consumer address embedded in the URL path — for clients that cannot set
-/// custom HTTP headers (e.g. graph-node, Ethereum execution clients).
-/// The address must be a valid checksummed or lowercase Ethereum address.
+/// For clients that cannot set headers, such as graph-node. The segment is an API key, or, for
+/// older configs, a consumer address.
 async fn rpc_handler_with_consumer(
     State(state): State<AppState>,
-    Path((chain_id, consumer_str)): Path<(u64, String)>,
+    Path((chain_id, segment)): Path<(u64, String)>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<Response, GatewayError> {
-    let consumer = consumer_str
-        .parse::<Address>()
-        .map_err(|_| GatewayError::InvalidConsumerAddress(consumer_str))?;
-    dispatch_rpc(state, chain_id, peer, consumer, body).await
+    let (consumer, path_key) = match segment.parse::<Address>() {
+        Ok(addr) => (addr, None),
+        Err(_) if segment.starts_with("0x") => {
+            return Err(GatewayError::InvalidConsumerAddress(segment))
+        }
+        Err(_) => (Address::ZERO, Some(segment.as_str())),
+    };
+    let caller = state.api_keys.authenticate(path_key, &headers)?;
+    dispatch_rpc(state, chain_id, peer, consumer, caller, body).await
 }
 
 /// Unified multi-chain endpoint — chain selected via the `X-Chain-Id` header.
@@ -71,7 +77,8 @@ async fn rpc_handler_unified(
         .and_then(|s| s.parse().ok())
         .unwrap_or(1);
     let consumer = extract_consumer_address(&headers)?;
-    dispatch_rpc(state, chain_id, peer, consumer, body).await
+    let caller = state.api_keys.authenticate(None, &headers)?;
+    dispatch_rpc(state, chain_id, peer, consumer, caller, body).await
 }
 
 /// Shared dispatch logic. Applies rate limit, then handles single or batch JSON-RPC.
@@ -80,6 +87,7 @@ async fn dispatch_rpc(
     chain_id: u64,
     peer: SocketAddr,
     consumer: Address,
+    caller: Caller,
     body: Value,
 ) -> Result<Response, GatewayError> {
     // --- Per-IP rate limiting ---
@@ -88,6 +96,10 @@ async fn dispatch_rpc(
             return Err(GatewayError::RateLimited);
         }
     }
+    caller.check_rate(match &body {
+        Value::Array(items) => items.len() as u32,
+        _ => 1,
+    })?;
 
     match body {
         Value::Array(items) => {
@@ -103,7 +115,7 @@ async fn dispatch_rpc(
             let responses: Vec<Value> = join_all(
                 requests
                     .iter()
-                    .map(|req| process_request(&state, chain_id, req, consumer)),
+                    .map(|req| process_request(&state, chain_id, req, consumer, &caller)),
             )
             .await
             .into_iter()
@@ -123,7 +135,7 @@ async fn dispatch_rpc(
             let request: JsonRpcRequest = serde_json::from_value(body)
                 .map_err(|e| GatewayError::InvalidRequest(e.to_string()))?;
             let (response, attestation) =
-                process_request(&state, chain_id, &request, consumer).await?;
+                process_request(&state, chain_id, &request, consumer, &caller).await?;
             let mut resp = Json(response).into_response();
             if let Some(att) = attestation {
                 if let Ok(val) = att.parse() {
@@ -267,6 +279,7 @@ async fn process_request(
     chain_id: u64,
     request: &JsonRpcRequest,
     consumer: Address,
+    caller: &Caller,
 ) -> Result<(JsonRpcResponse, Option<String>), GatewayError> {
     request.validate()?;
 
@@ -385,12 +398,15 @@ async fn process_request(
         "ok"
     };
     metrics::record(chain_id, &request.method, outcome, duration);
+    // Charged whenever a provider answered, error or not: its receipt has already been paid.
+    metrics::record_usage(caller.label(), chain_id, cu);
 
     tracing::debug!(
         method = %request.method,
         chain_id,
         provider = %winner.endpoint,
         consumer = %consumer,
+        key = caller.label(),
         cu,
         "served"
     );

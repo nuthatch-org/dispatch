@@ -3,14 +3,14 @@
 Three ways to consume the Dispatch network: hit the gateway directly, run the local `dispatch-proxy`, or use the consumer SDK (trustless, signs receipts locally).
 
 **Who manages on-chain GRT?**
-- **Gateway** — the gateway is the on-chain payer. It maintains its own GRT escrow with each provider. You do not need to deposit GRT yourself; your `X-Consumer-Address` is used for per-consumer billing and rate-limiting only.
+- **Gateway** — the gateway is the on-chain payer. It maintains its own GRT escrow with each provider. You do not need to deposit GRT yourself; you need an API key from the gateway operator.
 - **dispatch-proxy / Consumer SDK** — you are the on-chain payer. You must deposit GRT into `PaymentsEscrow` before making requests (see [Funding the escrow](#funding-the-escrow)).
 
 ---
 
 ## Via the Gateway
 
-The gateway handles provider selection and TAP receipt signing. You must include your Ethereum address in every request via the `X-Consumer-Address` header — it is used for per-consumer billing and rate-limiting. The gateway manages its own on-chain GRT flow; you do not need to fund an escrow account to use the gateway.
+The gateway handles provider selection and TAP receipt signing. Every request needs an API key, sent as `X-Api-Key`, as `Authorization: Bearer`, or in the path as `/rpc/{chain_id}/{key}` for clients such as graph-node that cannot set headers. The gateway manages its own on-chain GRT flow; you do not need to fund an escrow account to use the gateway.
 
 **Live gateway:** `https://gateway.lodestar-dashboard.com`
 
@@ -18,13 +18,13 @@ The gateway handles provider selection and TAP receipt signing. You must include
 # curl
 curl -s -X POST https://gateway.lodestar-dashboard.com/rpc/42161 \
   -H "Content-Type: application/json" \
-  -H "X-Consumer-Address: 0xYOUR_ADDRESS" \
+  -H "X-Api-Key: dsp_YOUR_KEY" \
   -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}'
 
 # Check the attestation header
 curl -si -X POST https://gateway.lodestar-dashboard.com/rpc/42161 \
   -H "Content-Type: application/json" \
-  -H "X-Consumer-Address: 0xYOUR_ADDRESS" \
+  -H "X-Api-Key: dsp_YOUR_KEY" \
   -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
   | grep -E "x-drpc-attestation|result"
 ```
@@ -39,7 +39,7 @@ const client = createPublicClient({
   chain: arbitrum,
   transport: http("https://gateway.lodestar-dashboard.com/rpc/42161", {
     fetchOptions: {
-      headers: { "X-Consumer-Address": "0xYOUR_ADDRESS" },
+      headers: { "X-Api-Key": "dsp_YOUR_KEY" },
     },
   }),
 });
@@ -47,7 +47,7 @@ const client = createPublicClient({
 const block = await client.getBlockNumber();
 ```
 
-Missing the `X-Consumer-Address` header returns `402 Payment Required`.
+A missing or unknown key returns `401 Unauthorized`.
 
 **Routes:**
 ```
