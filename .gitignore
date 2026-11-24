@@ -20,3 +20,5 @@ subgraph/build/
 contracts/broadcast/
 .env.local
 apps/dispatch-live/.vercel
+
+rav-ledger.json

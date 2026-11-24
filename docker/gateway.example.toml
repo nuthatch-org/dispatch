@@ -25,6 +25,10 @@ eip712_domain_name = "GraphTallyCollector"
 # eip712_chain_id = 42161
 # eip712_verifying_contract = "0x8f69F5C07477Ac46FBc491B1E6D91E2bb0111A9e"
 
+# Last RAV signed per collection. Keep it on a volume; if it is lost, aggregation restarts from
+# on-chain tokensCollected (needs [provisioning]) or from zero.
+rav_ledger_path = "/var/lib/dispatch/rav-ledger.json"
+
 # GRT wei per compute unit. Default = 4e-6 GRT/CU ($10.80/M eth_calls at $0.09/GRT, ×3 concurrent).
 # Break-even vs Alchemy on eth_call at ~$0.10/GRT. See config.rs pricing_math test for derivation.
 # base_price_per_cu = 4000000000000

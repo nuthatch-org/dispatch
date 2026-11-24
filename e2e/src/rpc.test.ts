@@ -515,8 +515,26 @@ describe("rav/aggregate", () => {
     expect(rav.payer.toLowerCase()).toBe(fx.gatewaySignerAddress.toLowerCase());
     expect(rav.service_provider.toLowerCase()).toBe(fx.providerAddress.toLowerCase());
     expect(rav.data_service.toLowerCase()).toBe(fx.rpcDataService.toLowerCase());
-    // value_aggregate = N × 4_000_000_000_000 = 20_000_000_000_000 (within safe integer range)
-    expect(rav.value_aggregate).toBe(N * 4_000_000_000_000);
+    // Cumulative over whatever the gateway already signed for this collection.
+    expect(rav.value_aggregate).toBeGreaterThanOrEqual(N * 4_000_000_000_000);
+  });
+
+  it("ignores the caller's floor and never pays a receipt twice", async () => {
+    const post = async (receipts: string[], floor = 0) => {
+      const body = `{"service_provider":"${fx.providerAddress}","previous_rav_value":${floor},"receipts":[${receipts.join(",")}]}`;
+      const res = await fetch(`${GATEWAY_URL}/rav/aggregate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+      });
+      expect(res.status).toBe(200);
+      return ((await res.json()) as any).signed_rav.rav.value_aggregate as number;
+    };
+
+    const first = await signReceipt(fx);
+    const v1 = await post([first, first], 1_000_000_000_000_000_000);
+    expect(await post([first])).toBe(v1);
+    expect(await post([first, await signReceipt(fx)])).toBe(v1 + 4_000_000_000_000);
   });
 
   it("rejects empty receipts array with 400", async () => {

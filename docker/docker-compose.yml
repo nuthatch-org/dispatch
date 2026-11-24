@@ -64,6 +64,7 @@ services:
       - "127.0.0.1:8080:8080"
     volumes:
       - ./gateway.toml:/etc/dispatch/gateway.toml:ro
+      - gateway_data:/var/lib/dispatch
     environment:
       DISPATCH_GATEWAY_CONFIG: /etc/dispatch/gateway.toml
       RUST_LOG: info
@@ -86,3 +87,4 @@ services:
 
 volumes:
   postgres_data:
+  gateway_data:
