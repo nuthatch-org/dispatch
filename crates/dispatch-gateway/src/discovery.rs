@@ -79,7 +79,7 @@ pub async fn run(state: AppState) {
                             tracing::debug!(
                                 address = %p.address,
                                 static_endpoint = %s.endpoint,
-                                subgraph_endpoint = %p.endpoint,
+                                discovered_endpoint = %p.endpoint,
                                 "using static endpoint override for provider"
                             );
                             p.endpoint = s.endpoint.clone();
@@ -107,7 +107,7 @@ pub async fn run(state: AppState) {
                                         address = %p.address,
                                         chain_id,
                                         tier = ?tier,
-                                        "supplementing subgraph data with static chain capability"
+                                        "supplementing discovered capabilities with a static one"
                                     );
                                     entry.push(tier);
                                 }
@@ -120,13 +120,10 @@ pub async fn run(state: AppState) {
                 }
                 let new_registry = state.registry.load().refreshed(&providers);
                 state.registry.store(Arc::new(new_registry));
-                tracing::info!(
-                    count = providers.len(),
-                    "provider registry refreshed from subgraph"
-                );
+                tracing::info!(count = providers.len(), "provider registry refreshed");
             }
-            Ok(_) => tracing::warn!("subgraph returned no active providers"),
-            Err(e) => tracing::warn!(error = %e, "subgraph discovery failed"),
+            Ok(_) => tracing::warn!("discovery found no active providers"),
+            Err(e) => tracing::warn!(error = %e, "provider discovery failed"),
         }
     }
 }

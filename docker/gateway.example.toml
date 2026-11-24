@@ -95,7 +95,7 @@ concurrent_k        = 3
 # "nest": a nuthatch nest indexing them (see docs/src/providers.md), queried over its /sql.
 # "chain": straight from Arbitrum through [chain] arbitrum_rpc_url, no other service.
 source        = "nest"
-nest_url      = "http://172.18.0.1:8120"
+nest_url      = "http://nest:8120"
 interval_secs = 60
 
 # ── Receipt feed API ──────────────────────────────────────────────────────
