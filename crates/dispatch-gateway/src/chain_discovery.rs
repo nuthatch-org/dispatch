@@ -292,9 +292,10 @@ impl NestSource {
             ),
         ] {
             let q = format!("SELECT block_number, log_index, {cols} FROM {table}");
+            // `GET /sql?q=` is what every nest serves; a `dev` nest refuses `POST /sql` with 405.
             let resp: serde_json::Value = client
-                .post(&self.sql_url)
-                .json(&serde_json::json!({ "q": q, "max_rows": 10000 }))
+                .get(&self.sql_url)
+                .query(&[("q", q.as_str())])
                 .send()
                 .await?
                 .json()
@@ -303,7 +304,9 @@ impl NestSource {
                 anyhow::bail!("{table}: {e}");
             }
             if resp["truncated"].as_bool() == Some(true) {
-                anyhow::bail!("{table}: more than 10000 rows, refusing a partial provider list");
+                anyhow::bail!(
+                    "{table}: the nest truncated the answer, refusing a partial provider list"
+                );
             }
             for r in resp["rows"].as_array().cloned().unwrap_or_default() {
                 let num = |k: &str| {
@@ -455,12 +458,13 @@ mod tests {
 
     #[tokio::test]
     async fn the_nest_source_replays_its_tables_in_chain_order() {
-        use axum::{routing::post, Json, Router};
+        use axum::{extract::Query, routing::get, Json, Router};
         use serde_json::{json, Value};
+        use std::collections::HashMap;
 
         // Rows arrive per table and out of chain order; numbers sometimes as strings.
-        async fn sql(Json(body): Json<Value>) -> Json<Value> {
-            let q = body["q"].as_str().unwrap_or_default().to_string();
+        async fn sql(Query(params): Query<HashMap<String, String>>) -> Json<Value> {
+            let q = params.get("q").cloned().unwrap_or_default();
             let p = "0x0101010101010101010101010101010101010101";
             let rows = if q.contains("provider_registered") {
                 json!([{ "block_number": 10, "log_index": 0, "provider": p, "endpoint": "https://one", "geo": "u0" }])
@@ -480,7 +484,7 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
-            axum::serve(listener, Router::new().route("/sql", post(sql)))
+            axum::serve(listener, Router::new().route("/sql", get(sql)))
                 .await
                 .unwrap()
         });
