@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::{
-    affinity, config::CapabilityTier, error::GatewayError, metrics, registry::Provider, selector,
-    server::AppState,
+    affinity, attestation::Attestor, config::CapabilityTier, error::GatewayError, metrics,
+    registry::Provider, selector, server::AppState,
 };
 use dispatch_tap::create_receipt;
 
@@ -402,15 +402,36 @@ async fn process_request(
 // Attestation verification
 // ---------------------------------------------------------------------------
 
-/// Parse and verify the X-Drpc-Attestation header.
-/// Returns the recovered signer address as a string, or None if absent/invalid.
+/// Keep an attestation only if its signer may act for the provider that served the response.
+async fn bind_attestation(
+    attestor: &Attestor,
+    client: &reqwest::Client,
+    provider: Address,
+    verified: Option<(String, Address)>,
+) -> Option<String> {
+    let (outcome, kept) = match verified {
+        Some((header, signer)) if attestor.is_bound(client, provider, signer).await => {
+            ("bound", Some(header))
+        }
+        Some(_) => ("unbound", None),
+        None => ("missing", None),
+    };
+    metrics::ATTESTATIONS_TOTAL
+        .with_label_values(&[&format!("{provider:?}"), outcome])
+        .inc();
+    kept
+}
+
+/// Parse the X-Drpc-Attestation header and check its signature over this response.
+/// Returns the header and recovered signer, or None if absent/invalid. Says nothing about
+/// whether the signer belongs to the provider; see `bind_attestation`.
 fn verify_attestation(
     attestation_header: Option<&str>,
     chain_id: u64,
     method: &str,
     params_json: &str,
     result_json: &str,
-) -> Option<String> {
+) -> Option<(String, Address)> {
     let header = attestation_header?;
 
     #[derive(serde::Deserialize)]
@@ -441,7 +462,7 @@ fn verify_attestation(
         return None;
     }
 
-    Some(header.to_string())
+    Some((header.to_string(), recovered))
 }
 
 // ---------------------------------------------------------------------------
@@ -546,13 +567,19 @@ async fn dispatch_concurrent(
             _ => "null".to_string(),
         };
 
-        let attestation = verify_attestation(
+        let verified = verify_attestation(
             att_header.as_deref(),
             chain_id,
             &request.method,
             &params_json,
             &result_json,
         );
+        let attestation =
+            bind_attestation(&state.attestor, &state.http_client, p.address, verified).await;
+        if attestation.is_none() && state.config.qos.require_attestation {
+            p.qos.record_failure();
+            continue;
+        }
 
         p.qos.record_success(ms);
         return Ok((body, attestation, p));
@@ -588,6 +615,8 @@ async fn dispatch_quorum(
             let params_json = params_json.clone();
             let method = request.method.clone();
             let metadata = consumer_metadata.clone();
+            let attestor = state.attestor.clone();
+            let require_attestation = state.config.qos.require_attestation;
 
             async move {
                 let signed = create_receipt(
@@ -638,13 +667,18 @@ async fn dispatch_quorum(
                     _ => "null".to_string(),
                 };
 
-                let attestation = verify_attestation(
+                let verified = verify_attestation(
                     att_header.as_deref(),
                     chain_id,
                     &method,
                     &params_json,
                     &result_json,
                 );
+                let attestation = bind_attestation(&attestor, &client, p.address, verified).await;
+                if attestation.is_none() && require_attestation {
+                    p.qos.record_failure();
+                    return Err("no attestation bound to the provider".to_string());
+                }
 
                 p.qos.record_success(ms);
                 Ok::<_, String>((body, result_json, attestation, p))
@@ -1056,6 +1090,12 @@ mod tests {
 
         assert!(
             verify_attestation(Some(&att), chain_id, method, params_json, result_json).is_some()
+        );
+        assert_eq!(
+            verify_attestation(Some(&att), chain_id, method, params_json, result_json)
+                .map(|(_, recovered)| recovered),
+            Some(signer),
+            "the recovered signer is what gets checked against the provider"
         );
     }
 }

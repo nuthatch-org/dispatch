@@ -101,6 +101,9 @@ pub struct TapConfig {
     /// GraphTallyCollector contract address.
     #[serde(default = "default_tap_verifying_contract")]
     pub eip712_verifying_contract: Address,
+    /// HorizonStaking, asked whether an attestation signer is an operator of its provider.
+    #[serde(default = "default_horizon_staking")]
+    pub horizon_staking_address: Address,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -117,6 +120,9 @@ pub struct QosConfig {
     /// Score bonus added for providers in the same region as this gateway.
     #[serde(default = "default_region_bonus")]
     pub region_bonus: f64,
+    /// Treat a response without an attestation bound to its provider as a provider failure.
+    #[serde(default)]
+    pub require_attestation: bool,
 }
 
 /// Static provider configuration.
@@ -242,6 +248,11 @@ fn default_port() -> u16 {
 fn default_base_price_per_cu() -> u128 {
     4_000_000_000_000
 } // 4e-6 GRT/CU; see pricing_math test
+fn default_horizon_staking() -> Address {
+    "0x00669A4CF01450B64E8A2A20E9b1FCB71E61eF03"
+        .parse()
+        .unwrap()
+}
 fn default_tap_chain_id() -> u64 {
     42161
 }

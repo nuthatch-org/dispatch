@@ -8,6 +8,7 @@ use k256::ecdsa::SigningKey;
 use tower_http::trace::TraceLayer;
 
 use crate::affinity::FilterAffinity;
+use crate::attestation::Attestor;
 use crate::{config::Config, discovery, probe, provisioner, registry::Registry, routes};
 
 pub type IpRateLimiter = DefaultKeyedRateLimiter<std::net::IpAddr>;
@@ -29,6 +30,7 @@ pub struct AppState {
     /// Which provider owns which filter. Filters are node-local state, so the follow-up call must
     /// reach the same node that created them; see `affinity`.
     pub filter_affinity: Arc<FilterAffinity>,
+    pub attestor: Arc<Attestor>,
 }
 
 pub async fn run(config: Config) -> Result<()> {
@@ -72,6 +74,15 @@ pub async fn run(config: Config) -> Result<()> {
         filter_affinity: Arc::new(FilterAffinity::new(
             std::time::Duration::from_secs(300),
             100_000,
+        )),
+        attestor: Arc::new(Attestor::new(
+            config.provisioning.as_ref().map(|p| {
+                (
+                    p.arbitrum_rpc_url.clone(),
+                    config.tap.horizon_staking_address,
+                )
+            }),
+            config.tap.data_service_address,
         )),
     };
 

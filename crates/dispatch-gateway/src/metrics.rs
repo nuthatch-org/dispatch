@@ -19,6 +19,12 @@ lazy_static! {
         vec![0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0]
     )
     .unwrap();
+    pub static ref ATTESTATIONS_TOTAL: CounterVec = register_counter_vec!(
+        "dispatch_gateway_attestations_total",
+        "Provider responses by attestation outcome: bound, unbound or missing",
+        &["provider", "outcome"]
+    )
+    .unwrap();
 }
 
 /// Increment the request counter and observe the duration.
