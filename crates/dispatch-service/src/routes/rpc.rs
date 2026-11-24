@@ -35,7 +35,11 @@ async fn rpc_handler(
         .ok_or(ServiceError::UnsupportedChain(chain_id))?
         .clone();
 
-    let validated = admit(&state, &headers).await?;
+    let items = match &body {
+        Value::Array(a) => a.len() as u128,
+        _ => 1,
+    };
+    let validated = admit(&state, &headers, items).await?;
 
     match body {
         Value::Array(items) => {
@@ -124,6 +128,7 @@ fn parse_batch(items: Vec<Value>) -> Result<Vec<JsonRpcRequest>, ServiceError> {
 pub(crate) async fn admit(
     state: &AppState,
     headers: &HeaderMap,
+    items: u128,
 ) -> Result<tap::ValidatedReceipt, ServiceError> {
     // --- TAP receipt validation (shared by single and batch) ---
     let receipt_header = headers
@@ -146,6 +151,14 @@ pub(crate) async fn admit(
         state.config.tap.max_receipt_age_ns,
         now_ns,
     )?;
+
+    let min = state.config.tap.min_value_per_request.saturating_mul(items);
+    if validated.receipt.value < min {
+        return Err(ServiceError::Underpriced {
+            got: validated.receipt.value,
+            min,
+        });
+    }
 
     // --- Escrow balance pre-check (cached 30 s) ---
     // Check the consumer's (payer's) escrow, not the gateway signer's.
@@ -302,5 +315,33 @@ mod tests {
         let items = vec![json!({"jsonrpc": "2.0", "method": "eth_blockNumber"})];
         let reqs = parse_batch(items).unwrap();
         assert_eq!(reqs[0].id, None);
+    }
+
+    #[tokio::test]
+    async fn receipts_below_the_floor_are_refused_and_a_batch_must_cover_every_item() {
+        use crate::routes::test_support::{receipt_header, serve};
+
+        let (addr, state) = serve("min_value_per_request = 1000", "").await;
+        let post = |value: u128, body: serde_json::Value| {
+            let header = receipt_header(&state, value);
+            async move {
+                reqwest::Client::new()
+                    .post(format!("http://{addr}/rpc/1"))
+                    .header("TAP-Receipt", header)
+                    .json(&body)
+                    .send()
+                    .await
+                    .unwrap()
+                    .status()
+                    .as_u16()
+            }
+        };
+        let call = json!({"jsonrpc": "2.0", "method": "eth_blockNumber", "params": [], "id": 1});
+
+        assert_eq!(post(999, call.clone()).await, 402);
+        // Admitted, then the unreachable backend answers 502: past the floor.
+        assert_eq!(post(1000, call.clone()).await, 502);
+        assert_eq!(post(1000, json!([call.clone(), call.clone()])).await, 402);
+        assert_eq!(post(2000, json!([call.clone(), call])).await, 502);
     }
 }

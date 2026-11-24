@@ -97,6 +97,9 @@ pub struct TapConfig {
     /// Resets after a successful on-chain collect(). Default: 0.1 GRT.
     #[serde(default = "default_credit_threshold", deserialize_with = "de_u128")]
     pub credit_threshold: u128,
+    /// Lowest receipt value (GRT wei) accepted per request; a batch must cover every item.
+    #[serde(default, deserialize_with = "de_u128")]
+    pub min_value_per_request: u128,
     /// PaymentsEscrow contract address on Arbitrum One.
     /// Defaults to the live Horizon deployment.
     #[serde(default = "default_payments_escrow_address")]
