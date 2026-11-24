@@ -117,6 +117,10 @@ pub struct ChainsConfig {
     pub supported: Vec<u64>,
     /// Map of chain_id (as string) → backend RPC URL.
     pub backends: HashMap<String, String>,
+    /// Serve `/ws/{chain_id}`. Each connection is paid by one receipt on upgrade, whatever it
+    /// subscribes to, so it is off unless the operator accepts that.
+    #[serde(default)]
+    pub websocket: bool,
 }
 
 impl Config {

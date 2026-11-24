@@ -47,6 +47,8 @@ aggregator_url = "http://dispatch-gateway:8080"
 url = "postgres://dispatch:dispatch@localhost:5432/dispatch"
 
 [chains]
+# Serve /ws/{chain_id}. One receipt pays for a whole connection, so it is off by default.
+# websocket = false
 supported = [1, 42161, 10, 8453]
 
 # Map chain_id (string) → backend Ethereum client URL

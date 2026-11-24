@@ -49,6 +49,8 @@ aggregator_url = "http://dispatch-gateway:8080"
 # escrow_check_rpc_url = "https://arb1.arbitrum.io/rpc"
 
 [chains]
+# Serve /ws/{chain_id}. One receipt pays for a whole connection, so it is off by default.
+# websocket = false
 # Chain IDs this node is registered to serve.
 # Must match the chains passed to RPCDataService.startService() on-chain.
 # Supported chain IDs (add any subset you run backends for):

@@ -23,6 +23,9 @@ pub enum ServiceError {
     #[error("chain {0} not supported")]
     UnsupportedChain(u64),
 
+    #[error("websocket is not enabled on this provider")]
+    WebSocketDisabled,
+
     #[error("backend RPC error: {0}")]
     BackendError(String),
 
@@ -46,7 +49,9 @@ impl IntoResponse for ServiceError {
             | ServiceError::InvalidReceipt(_)
             | ServiceError::UnauthorizedSender(_)
             | ServiceError::ReceiptExpired => (StatusCode::UNAUTHORIZED, -32001, self.to_string()),
-            ServiceError::UnsupportedChain(_) => (StatusCode::NOT_FOUND, -32002, self.to_string()),
+            ServiceError::UnsupportedChain(_) | ServiceError::WebSocketDisabled => {
+                (StatusCode::NOT_FOUND, -32002, self.to_string())
+            }
             ServiceError::CreditLimitExceeded | ServiceError::InsufficientEscrow => {
                 (StatusCode::PAYMENT_REQUIRED, -32005, self.to_string())
             }
