@@ -186,6 +186,9 @@ pub struct ProviderConfig {
     /// per-chain tier filtering. Empty for static (TOML) provider configs.
     #[serde(default)]
     pub chain_capabilities: HashMap<u64, Vec<CapabilityTier>>,
+    /// The provider's own minimum price per class. Only applies with a `[pricing]` section.
+    #[serde(default)]
+    pub price_floor: Option<crate::pricing::PriceFloor>,
 }
 
 /// Dynamic provider discovery via The Graph subgraph.
@@ -421,5 +424,24 @@ mod tests {
             Some("https://arb1.arbitrum.io/rpc")
         );
         assert!(with_chain.provisioning.is_none());
+    }
+
+    #[test]
+    fn a_provider_floor_parses_from_its_config_entry() {
+        let p: ProviderConfig = toml::from_str(
+            r#"
+            address = "0xCfBB471617Ae3F6fDa2D9F142115d59deAB50C5b"
+            endpoint = "https://dispatch-rpc.cargopete.com"
+            chains = [10]
+            [price_floor]
+            standard_usd_per_million = 4.0
+            trace_usd_per_million = 8.0
+            "#,
+        )
+        .unwrap();
+        let f = p.price_floor.unwrap();
+        assert_eq!(f.standard_usd_per_million, Some(4.0));
+        assert_eq!(f.archive_usd_per_million, None);
+        assert_eq!(f.trace_usd_per_million, Some(8.0));
     }
 }

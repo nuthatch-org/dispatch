@@ -79,6 +79,7 @@ pub async fn run(state: AppState) {
                         .iter()
                         .find(|s| s.address == p.address)
                     {
+                        p.price_floor = s.price_floor;
                         if s.endpoint != p.endpoint {
                             tracing::debug!(
                                 address = %p.address,
@@ -201,6 +202,7 @@ async fn fetch_providers(
             region: indexer.geo_hash.filter(|s| !s.is_empty()),
             capabilities: Vec::new(), // unused — chain_capabilities drives routing
             chain_capabilities: chain_caps,
+            price_floor: None,
         });
     }
 

@@ -59,6 +59,25 @@ fn default_feed_max_age() -> u64 {
     3600
 }
 
+/// A provider's own minimum, in USD per million requests per class. The gateway pays the higher of
+/// this and its list price, so a provider names its price instead of refusing receipts below it.
+#[derive(Debug, Deserialize, Clone, Copy, Default, PartialEq)]
+pub struct PriceFloor {
+    pub standard_usd_per_million: Option<f64>,
+    pub archive_usd_per_million: Option<f64>,
+    pub trace_usd_per_million: Option<f64>,
+}
+
+impl PriceFloor {
+    fn usd(&self, class: PriceClass) -> Option<f64> {
+        match class {
+            PriceClass::Standard => self.standard_usd_per_million,
+            PriceClass::Archive => self.archive_usd_per_million,
+            PriceClass::Trace => self.trace_usd_per_million,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PriceClass {
     Standard,
@@ -100,13 +119,21 @@ impl Pricer {
         f64::from_bits(self.grt_usd_bits.load(Ordering::Relaxed))
     }
 
-    /// GRT wei for one request of this class.
+    /// GRT wei for one request of this class at the list price.
     pub fn receipt_value(&self, class: PriceClass) -> u128 {
-        let usd_per_million = match class {
+        self.receipt_value_for(class, None)
+    }
+
+    /// GRT wei for one request of this class to a provider, which is never paid below its floor.
+    pub fn receipt_value_for(&self, class: PriceClass, floor: Option<&PriceFloor>) -> u128 {
+        let list = match class {
             PriceClass::Standard => self.config.standard_usd_per_million,
             PriceClass::Archive => self.config.archive_usd_per_million,
             PriceClass::Trace => self.config.trace_usd_per_million,
         };
+        let usd_per_million = floor
+            .and_then(|f| f.usd(class))
+            .map_or(list, |f| f.max(list));
         // usd/request ÷ usd/GRT × 1e18 wei/GRT, simplified: usd_per_million × 1e12 ÷ grt_usd.
         (usd_per_million * 1e12 / self.grt_usd()).round() as u128
     }
@@ -252,5 +279,20 @@ mod tests {
             grt_usd_feed: None,
         })
         .is_err());
+    }
+
+    #[test]
+    fn a_provider_floor_raises_its_price_and_never_lowers_it() {
+        let p = pricer(0.02);
+        let floor = PriceFloor {
+            standard_usd_per_million: Some(4.0),
+            archive_usd_per_million: Some(0.5),
+            trace_usd_per_million: None,
+        };
+        let list = |c| p.receipt_value(c);
+        let with = |c| p.receipt_value_for(c, Some(&floor));
+        assert_eq!(with(PriceClass::Standard), 4 * list(PriceClass::Standard));
+        assert_eq!(with(PriceClass::Archive), list(PriceClass::Archive));
+        assert_eq!(with(PriceClass::Trace), list(PriceClass::Trace));
     }
 }

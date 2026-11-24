@@ -28,7 +28,7 @@ Fully pay-per-request via **GraphTally (TAP v2)** micropayments. No epoch, no al
 
 ### Pricing model
 
-With a `[pricing]` section the gateway prices in USD per million requests, by class: standard, archive, and trace (`debug_*`, `trace_*` and `eth_getLogs`). The suggested list is $1, $3 and $4, just under dRPC's flat $4.20 to $6. Each receipt's GRT value is worked out from the current GRT/USD rate when it is signed, so providers are still paid in GRT and the buyer's price does not move with it. `GET /pricing` publishes the live list and rate. The CU model below applies when `[pricing]` is absent.
+With a `[pricing]` section the gateway prices in USD per million requests, by class: standard, archive, and trace (`debug_*`, `trace_*` and `eth_getLogs`). The suggested list is $1, $3 and $4, just under dRPC's flat $4.20 to $6. Each receipt's GRT value is worked out from the current GRT/USD rate when it is signed, so providers are still paid in GRT and the buyer's price does not move with it. `GET /pricing` publishes the live list and rate. A provider can also set its own floor per class (`price_floor` on its gateway entry), and the gateway then pays it the higher of the floor and the list price. The CU model below applies when `[pricing]` is absent.
 
 The gateway charges per **compute unit (CU)**, where one CU = `4_000_000_000_000` GRT wei = `4e-6 GRT`.
 
