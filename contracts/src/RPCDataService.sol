@@ -15,6 +15,14 @@ import {IHorizonStaking} from "@graphprotocol/horizon/interfaces/IHorizonStaking
 
 import {IRPCDataService} from "./interfaces/IRPCDataService.sol";
 
+/// @dev The public `tokensCollected` getter, which IGraphTallyCollector does not declare.
+interface IGraphTallyCollectorLedger {
+    function tokensCollected(address dataService, bytes32 collectionId, address receiver, address payer)
+        external
+        view
+        returns (uint256);
+}
+
 /// @title RPCDataService
 /// @notice Decentralised JSON-RPC data service built on The Graph Protocol's Horizon framework.
 ///
@@ -289,6 +297,21 @@ contract RPCDataService is
         // Release any expired stake claims before locking new ones.
         _releaseStake(serviceProvider, 0);
 
+        // Lock before the external call. This mirrors the collector's own amount rule, and the
+        // result is checked against what it actually collected below.
+        uint256 expectedFees = tokensToCollect;
+        if (expectedFees == 0) {
+            uint256 alreadyCollected = IGraphTallyCollectorLedger(address(GRAPH_TALLY_COLLECTOR))
+                .tokensCollected(address(this), signedRav.rav.collectionId, serviceProvider, signedRav.rav.payer);
+            if (signedRav.rav.valueAggregate > alreadyCollected) {
+                expectedFees = signedRav.rav.valueAggregate - alreadyCollected;
+            }
+        }
+        if (expectedFees > 0) {
+            // Released after the dispute window.
+            _lockStake(serviceProvider, expectedFees * STAKE_TO_FEES_RATIO, block.timestamp + minThawingPeriod);
+        }
+
         // Collect via GraphTallyCollector → PaymentsEscrow → GraphPayments.
         // The RAV's dataService field must equal address(this) — enforced by GraphTallyCollector.
         // Fees flow to paymentsDestination[serviceProvider], not necessarily serviceProvider itself.
@@ -300,16 +323,13 @@ contract RPCDataService is
             tokensToCollect
         );
 
+        if (fees != expectedFees) revert UnexpectedCollectedAmount(expectedFees, fees);
+
         uint256 received = _graphToken().balanceOf(address(this)) - balanceBefore;
         if (received > 0) {
             uint256 burned = received * BURN_CUT_PPM / (BURN_CUT_PPM + DATA_SERVICE_CUT_PPM);
             _graphToken().burn(burned);
             emit FeesBurned(serviceProvider, burned);
-        }
-
-        if (fees > 0) {
-            // Lock stake proportional to fees — released after the dispute window.
-            _lockStake(serviceProvider, fees * STAKE_TO_FEES_RATIO, block.timestamp + minThawingPeriod);
         }
     }
 

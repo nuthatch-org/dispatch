@@ -22,6 +22,7 @@ import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {RPCDataService} from "../src/RPCDataService.sol";
+import {IRPCDataService} from "../src/interfaces/IRPCDataService.sol";
 import {IHorizonStakingTypes} from "@graphprotocol/interfaces/contracts/horizon/internal/IHorizonStakingTypes.sol";
 import {IGraphPayments} from "@graphprotocol/horizon/interfaces/IGraphPayments.sol";
 import {IGraphTallyCollector} from "@graphprotocol/horizon/interfaces/IGraphTallyCollector.sol";
@@ -51,6 +52,10 @@ contract MockGraphTallyCollector {
     MockGraphToken public immutable TOKEN;
     uint256 public feeToReturn;
     address public destination;
+    uint256 public alreadyCollected;
+    RPCDataService public observed;
+    address public observedProvider;
+    uint256 public lockedAtCallTime;
 
     constructor(MockGraphToken token) {
         TOKEN = token;
@@ -61,7 +66,21 @@ contract MockGraphTallyCollector {
         destination = dest;
     }
 
+    function setAlreadyCollected(uint256 amount) external {
+        alreadyCollected = amount;
+    }
+
+    function observe(RPCDataService service, address provider) external {
+        observed = service;
+        observedProvider = provider;
+    }
+
+    function tokensCollected(address, bytes32, address, address) external view returns (uint256) {
+        return alreadyCollected;
+    }
+
     function collect(IGraphPayments.PaymentTypes, bytes calldata, uint256) external returns (uint256) {
+        if (address(observed) != address(0)) lockedAtCallTime = observed.feesProvisionTracker(observedProvider);
         // Settle before returning, exactly as the audit hypothesised the real chain does.
         TOKEN.mint(destination, feeToReturn);
         return feeToReturn;
@@ -165,10 +184,15 @@ contract H1CollectOrderingTest is Test {
     }
 
     function _collect() internal {
+        _collect(0, FEE);
+    }
+
+    function _collect(uint128 valueAggregate, uint256 tokensToCollect) internal {
         IGraphTallyCollector.SignedRAV memory rav;
         rav.rav.serviceProvider = provider;
         rav.rav.dataService = address(service);
-        service.collect(provider, IGraphPayments.PaymentTypes.QueryFee, abi.encode(rav, FEE));
+        rav.rav.valueAggregate = valueAggregate;
+        service.collect(provider, IGraphPayments.PaymentTypes.QueryFee, abi.encode(rav, tokensToCollect));
     }
 
     /// The audit's exact experiment. Available stake is one wei short of `FEE * 5`, so `_lockStake`
@@ -193,5 +217,26 @@ contract H1CollectOrderingTest is Test {
         staking.setTokensAvailable(provider, FEE * 5);
         _collect();
         assertEq(token.balanceOf(destination), FEE, "the mock must actually move funds");
+    }
+
+    function test_stakeIsLockedBeforeTheCollectorIsCalled() public {
+        staking.setTokensAvailable(provider, FEE * 5);
+        collector.observe(service, provider);
+        _collect();
+        assertEq(collector.lockedAtCallTime(), FEE * 5, "lock must precede the external call");
+    }
+
+    function test_collectAll_locksAgainstTheUncollectedRemainder() public {
+        staking.setTokensAvailable(provider, FEE * 5);
+        collector.setAlreadyCollected(200e18);
+        _collect(uint128(FEE + 200e18), 0);
+        assertEq(service.feesProvisionTracker(provider), FEE * 5);
+    }
+
+    function test_collectorReturningADifferentAmountReverts() public {
+        staking.setTokensAvailable(provider, FEE * 10);
+        collector.setPayout(FEE + 1, destination);
+        vm.expectRevert(abi.encodeWithSelector(IRPCDataService.UnexpectedCollectedAmount.selector, FEE, FEE + 1));
+        _collect();
     }
 }

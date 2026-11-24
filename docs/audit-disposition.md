@@ -64,6 +64,10 @@ What remains is a checks-effects-interactions ordering wart: the doomed path bur
 reverts, and if a future refactor ever wraps the collector call in `try/catch`, the finding becomes
 real. Worth reordering on style grounds. Not worth an audit round on its own.
 
+**Reordered.** `collect()` now locks stake for the amount the collector will take before calling it,
+and reverts if the collector reports a different amount. `test_stakeIsLockedBeforeTheCollectorIsCalled`
+fails against the old ordering.
+
 **Retained as a regression test**, because the property "a failed stake lock must not leave fees
 paid" is exactly the kind of thing a later refactor breaks silently.
 

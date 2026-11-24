@@ -249,6 +249,39 @@ contract RPCDataServiceIntegrationTest is Test {
         assertEq(grt.balanceOf(provider), 0); // not the provider address itself
     }
 
+    function test_collect_partialThenRemainder_locksWhatTheCollectorCollects() public {
+        uint256 signerPrivKey = 0xabcdef1234;
+        address signer = vm.addr(signerPrivKey);
+        _register(provider, "https://rpc.example.com", "u1hx", makeAddr("paymentWallet"));
+        _authorizeSigner(gateway, signerPrivKey, signer);
+
+        grt.mint(gateway, GRT_AMOUNT);
+        vm.startPrank(gateway);
+        grt.approve(address(escrow), GRT_AMOUNT);
+        escrow.deposit(address(tallyCollector), provider, GRT_AMOUNT);
+        vm.stopPrank();
+
+        IGraphTallyCollector.ReceiptAggregateVoucher memory rav = IGraphTallyCollector.ReceiptAggregateVoucher({
+            collectionId: bytes32(0),
+            payer: gateway,
+            serviceProvider: provider,
+            dataService: address(service),
+            timestampNs: uint64(block.timestamp) * 1_000_000_000,
+            valueAggregate: uint128(GRT_AMOUNT),
+            metadata: ""
+        });
+        IGraphTallyCollector.SignedRAV memory signed =
+            IGraphTallyCollector.SignedRAV({rav: rav, signature: _signRAV(signerPrivKey, rav)});
+
+        uint256 part = GRT_AMOUNT / 4;
+        service.collect(provider, IGraphPayments.PaymentTypes.QueryFee, abi.encode(signed, part));
+        // Zero asks the collector for everything not yet collected.
+        service.collect(provider, IGraphPayments.PaymentTypes.QueryFee, abi.encode(signed, uint256(0)));
+
+        assertEq(tallyCollector.tokensCollected(address(service), bytes32(0), provider, gateway), GRT_AMOUNT);
+        assertEq(service.feesProvisionTracker(provider), GRT_AMOUNT * service.STAKE_TO_FEES_RATIO());
+    }
+
     function test_collect_revertsOnInvalidSignature() public {
         address paymentWallet = makeAddr("paymentWallet");
         _register(provider, "https://rpc.example.com", "u1hx", paymentWallet);
