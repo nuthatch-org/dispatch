@@ -54,6 +54,13 @@ rav_ledger_path = "/var/lib/dispatch/rav-ledger.json"
 # A USD list per million requests, converted to GRT when each receipt is signed.
 # Without this section receipts use base_price_per_cu above. GET /pricing shows the live list.
 #
+# A provider can name its own minimum per class; the gateway pays the higher of that and the
+# list price on every receipt to it. Set it on the provider's [[providers]] entry:
+#   [providers.price_floor]
+#   standard_usd_per_million = 4.0
+#   archive_usd_per_million  = 6.0
+#   trace_usd_per_million    = 8.0
+#
 # [pricing]
 # standard_usd_per_million = 1.0
 # archive_usd_per_million  = 3.0

@@ -343,12 +343,12 @@ async fn process_request(
                 .is_some_and(|p| state.suspects.is_suspect(p.address)));
 
     let cu = cu_weight_for(&request.method);
-    let receipt_value = match &state.pricer {
-        Some(p) => p.receipt_value(PriceClass::of(
+    let price = Price {
+        class: PriceClass::of(
             &request.method,
             &required_tier(&request.method, &request.params),
-        )),
-        None => cu as u128 * state.config.tap.base_price_per_cu,
+        ),
+        cu_value: cu as u128 * state.config.tap.base_price_per_cu,
     };
 
     // Encode gateway payer address (bytes 0-19) + method name (bytes 20+) in metadata.
@@ -370,7 +370,7 @@ async fn process_request(
             chain_id,
             request,
             &candidates[..k],
-            receipt_value,
+            price,
             consumer_metadata.clone(),
         )
         .await?
@@ -380,7 +380,7 @@ async fn process_request(
             chain_id,
             request,
             &candidates,
-            receipt_value,
+            price,
             consumer_metadata.clone(),
         )
         .await?
@@ -399,7 +399,7 @@ async fn process_request(
                 response.result.clone(),
                 winner.address,
                 other.clone(),
-                receipt_value,
+                price,
                 consumer_metadata,
             );
         }
@@ -459,7 +459,7 @@ fn spawn_cross_check(
     first: Option<Value>,
     first_provider: Address,
     other: Arc<Provider>,
-    receipt_value: u128,
+    price: Price,
     metadata: Bytes,
 ) {
     tokio::spawn(async move {
@@ -468,7 +468,7 @@ fn spawn_cross_check(
             chain_id,
             &request,
             std::slice::from_ref(&other),
-            receipt_value,
+            price,
             metadata,
         )
         .await;
@@ -496,6 +496,23 @@ fn spawn_cross_check(
             .with_label_values(&[&chain_id.to_string(), outcome.label()])
             .inc();
     });
+}
+
+/// What a request is worth before knowing who serves it: its class for USD pricing, and its value
+/// under the older per-CU GRT pricing used when no `[pricing]` section is configured.
+#[derive(Clone, Copy)]
+struct Price {
+    class: PriceClass,
+    cu_value: u128,
+}
+
+impl Price {
+    fn for_provider(&self, state: &AppState, provider: &Provider) -> u128 {
+        match &state.pricer {
+            Some(p) => p.receipt_value_for(self.class, provider.price_floor.as_ref()),
+            None => self.cu_value,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -586,7 +603,7 @@ async fn dispatch_concurrent(
     chain_id: u64,
     request: &JsonRpcRequest,
     candidates: &[Arc<Provider>],
-    receipt_value: u128,
+    price: Price,
     consumer_metadata: Bytes,
 ) -> Result<(JsonRpcResponse, Option<String>, Arc<Provider>), GatewayError> {
     let params_json = serde_json::to_string(&request.params).unwrap_or_else(|_| "null".to_string());
@@ -599,7 +616,7 @@ async fn dispatch_concurrent(
             state.tap_domain_separator,
             state.config.tap.data_service_address,
             p.address,
-            receipt_value,
+            price.for_provider(state, &p),
             consumer_metadata.clone(),
         ) {
             Ok(s) => s,
@@ -697,7 +714,7 @@ async fn dispatch_quorum(
     chain_id: u64,
     request: &JsonRpcRequest,
     candidates: &[Arc<Provider>],
-    receipt_value: u128,
+    price: Price,
     consumer_metadata: Bytes,
 ) -> Result<(JsonRpcResponse, Option<String>, Arc<Provider>), GatewayError> {
     let params_json = serde_json::to_string(&request.params).unwrap_or_else(|_| "null".to_string());
@@ -717,6 +734,7 @@ async fn dispatch_quorum(
             let metadata = consumer_metadata.clone();
             let attestor = state.attestor.clone();
             let require_attestation = state.config.qos.require_attestation;
+            let receipt_value = price.for_provider(state, &p);
 
             async move {
                 let signed = create_receipt(

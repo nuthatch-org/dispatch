@@ -29,6 +29,7 @@ pub struct Provider {
     /// Per-chain capability map used for tier-aware routing.
     /// Key = chain ID; value = tiers this provider supports on that chain.
     pub chain_capabilities: HashMap<u64, Vec<CapabilityTier>>,
+    pub price_floor: Option<crate::pricing::PriceFloor>,
     /// Shared with the provider's entry in the next registry, so history survives discovery.
     pub qos: Arc<ProviderQos>,
     pub probes: Arc<Mutex<HashMap<u64, ProbeRecord>>>,
@@ -60,6 +61,7 @@ impl Provider {
             chains: cfg.chains.clone(),
             region: cfg.region.clone(),
             chain_capabilities,
+            price_floor: cfg.price_floor,
             qos: Arc::default(),
             probes: Arc::default(),
         }
