@@ -40,19 +40,20 @@ Subgraph: `https://api.studio.thegraph.com/query/1747796/rpc-network/v0.3.0`
 
 ## Active providers
 
-> Read from Arbitrum One 2026-08-28 by scanning `ProviderRegistered` / `ProviderDeregistered` and
-> `ServiceStarted` on the proxy, then confirming with `isRegistered()` and
-> `activeRegistrationCount()`. Not from memory.
+> Read from Arbitrum One 2026-11-24 by scanning every log on the proxy, confirming with
+> `isRegistered()` and `activeRegistrationCount()`, and requesting each endpoint's `/health`.
 
-**Two independent providers, both registered and both serving.**
+**Three registered, one answering.** Registration says nothing about whether an endpoint serves;
+the two dead providers still hold active registrations.
 
-| Address | Endpoint | Active registrations | Chains / tiers |
-|---|---|---|---|
-| `0xb43b2cccceada5292732a8c58ae134adefce09bb` | `https://rpc.cargopete.com` | 5 | 42161 Standard + Archive; 1, 56, 8453 Debug |
-| `0x575267eed09c338fae5716a486a7b58a5749a292` | — | 2 | 42161 Standard; 8453 Debug |
+| Address | Endpoint | Active registrations | Chains / tiers | `/health` |
+|---|---|---|---|---|
+| `0xcfbb471617ae3f6fda2d9f142115d59deab50c5b` | `https://dispatch-rpc.cargopete.com` | 3 | 10 Standard + Archive + Debug | 200 |
+| `0xb43b2cccceada5292732a8c58ae134adefce09bb` | `https://rpc.cargopete.com` | 5 | 42161 Standard + Archive; 1, 56, 8453 Debug | TLS handshake fails |
+| `0x575267eed09c338fae5716a486a7b58a5749a292` | `https://dispatch-production-5ffc.up.railway.app` | 2 | 42161 Standard; 8453 Debug | 404, "Application not found" |
 
-`0x575267ee…` deregistered at block 456,950,409 and re-registered ten blocks later; it is
-registered now.
+`0xb43b2ccc…` last collected fees on 2026-06-05, `0x575267ee…` earlier still. `0xcfbb4716…`
+registered on 2026-11-24 and collected the same day.
 
 **A note on quorum.** Deterministic methods are answered by one provider and cross-checked against a
 second on a sample; full quorum applies only to providers caught disagreeing. With two providers on

@@ -24,7 +24,7 @@ That's the loop.
 | `RPCDataService` contract | ✅ Live on Arbitrum One |
 | Subgraph | ✅ Live on The Graph Studio |
 | npm packages | ✅ Published (`@lodestar-dispatch/consumer-sdk`, `@lodestar-dispatch/indexer-agent`) |
-| Active providers | ✅ **1** — `https://rpc.cargopete.com` (Arbitrum One, Standard + Archive) |
+| Active providers | ⚠️ **1 of 3 answering** — `https://dispatch-rpc.cargopete.com` (Optimism, all tiers) |
 | Receipt signing & validation | ✅ Working — every request carries a signed EIP-712 TAP receipt |
 | Response attestation | ✅ Working — provider signs every response; gateway verifies before forwarding |
 | Quorum consensus | ✅ Working — deterministic methods cross-checked across 3 providers |
